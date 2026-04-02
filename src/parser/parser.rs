@@ -780,6 +780,7 @@ impl Parser {
     fn parse_type_decl_stmt(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // consume `type`
         let name = self.expect_identifier()?;
+        self.skip_newlines(); // allow multi-line type declarations
 
         if self.at(&TokenKind::LBrace) {
             // Struct: type Name { field: Type, ... }
@@ -1544,5 +1545,140 @@ mod tests {
     fn parse_multi_statement_program() {
         let prog = parse_program("use models.user.User\n\nlet x: Int = 1\nlet y: Int = 2");
         assert_eq!(prog.statements.len(), 3);
+    }
+
+    // --- Integration tests with real PACT code ---
+
+    #[test]
+    fn integration_pact_function_with_pipeline() {
+        let input = r#"fn active_admins(users: List<User>) -> List<String> {
+  users
+    | filter where .active
+    | filter where .role == Admin
+    | sort by .name
+    | map to .name
+}"#;
+        let prog = parse_program(input);
+        assert_eq!(prog.statements.len(), 1);
+        if let Statement::FnDecl { name, body, .. } = &prog.statements[0] {
+            assert_eq!(name, "active_admins");
+            assert_eq!(body.len(), 1);
+            if let Statement::Expression(Expr::Pipeline { steps, .. }) = &body[0] {
+                assert_eq!(steps.len(), 4);
+            } else {
+                panic!("Expected pipeline in body");
+            }
+        } else {
+            panic!("Expected FnDecl");
+        }
+    }
+
+    #[test]
+    fn integration_type_and_function() {
+        let input = r#"type Role = Admin | Editor | Viewer
+
+fn is_admin(role: Role) -> Bool {
+  match role {
+    Admin => true,
+    _ => false,
+  }
+}"#;
+        let prog = parse_program(input);
+        assert_eq!(prog.statements.len(), 2);
+        assert!(matches!(&prog.statements[0], Statement::TypeDecl(TypeDecl::Union { .. })));
+        assert!(matches!(&prog.statements[1], Statement::FnDecl { .. }));
+    }
+
+    #[test]
+    fn integration_let_with_error_propagation() {
+        let input = r#"let user: User = find_user(id)?"#;
+        let prog = parse_program(input);
+        if let Statement::Let { value, .. } = &prog.statements[0] {
+            assert!(matches!(value, Expr::ErrorPropagation(_)));
+        } else {
+            panic!("Expected Let");
+        }
+    }
+
+    #[test]
+    fn integration_fn_with_ensure_and_return_if() {
+        let input = r#"fn withdraw(account: Account, amount: Int) -> Account or InsufficientFunds {
+  ensure amount > 0
+  return InsufficientFunds if account.balance < amount
+  Account { ...account, balance: account.balance - amount }
+}"#;
+        let prog = parse_program(input);
+        if let Statement::FnDecl { body, error_types, .. } = &prog.statements[0] {
+            assert_eq!(error_types, &["InsufficientFunds"]);
+            assert!(body.len() >= 3);
+            assert!(matches!(&body[0], Statement::Expression(Expr::Ensure(_))));
+            assert!(matches!(&body[1], Statement::Return { condition: Some(_), .. }));
+        } else {
+            panic!("Expected FnDecl");
+        }
+    }
+
+    #[test]
+    fn integration_use_statements() {
+        let input = "use models.user.User\nuse models.order.Order";
+        let prog = parse_program(input);
+        assert_eq!(prog.statements.len(), 2);
+        assert!(matches!(&prog.statements[0], Statement::Use { path } if path.len() == 3));
+    }
+
+    #[test]
+    fn integration_intent_fn_with_needs() {
+        let input = r#"intent "create a new user"
+fn create_user(data: NewUser) -> User needs { db, time, rng } {
+  let id: ID = rng.uuid()
+  User {
+    id: id,
+    name: data.name,
+    active: true,
+  }
+}"#;
+        let prog = parse_program(input);
+        if let Statement::FnDecl { intent, effects, body, .. } = &prog.statements[0] {
+            assert_eq!(intent.as_deref(), Some("create a new user"));
+            assert_eq!(effects, &["db", "time", "rng"]);
+            assert!(body.len() >= 2); // let + struct literal
+        } else {
+            panic!("Expected FnDecl");
+        }
+    }
+
+    #[test]
+    fn integration_struct_type_declaration() {
+        let input = r#"type User {
+  id: ID,
+  name: String,
+  email: String,
+  age: Int,
+  role: Role,
+  active: Bool,
+}"#;
+        let prog = parse_program(input);
+        if let Statement::TypeDecl(TypeDecl::Struct { name, fields }) = &prog.statements[0] {
+            assert_eq!(name, "User");
+            assert_eq!(fields.len(), 6);
+            assert_eq!(fields[0].name, "id");
+            assert_eq!(fields[5].name, "active");
+        } else {
+            panic!("Expected Struct TypeDecl");
+        }
+    }
+
+    #[test]
+    fn integration_union_with_fields() {
+        let input = "type AppError\n  = NotFound { resource: String }\n  | Forbidden { reason: String }\n  | BadRequest { message: String }";
+        let prog = parse_program(input);
+        if let Statement::TypeDecl(TypeDecl::Union { name, variants }) = &prog.statements[0] {
+            assert_eq!(name, "AppError");
+            assert_eq!(variants.len(), 3);
+            assert!(variants[0].fields.is_some());
+            assert_eq!(variants[0].fields.as_ref().unwrap()[0].name, "resource");
+        } else {
+            panic!("Expected Union TypeDecl");
+        }
     }
 }
