@@ -1335,4 +1335,227 @@ mod tests {
             ]
         );
     }
+
+    // --- Task 10: Integration tests with real PACT code ---
+
+    #[test]
+    fn real_pact_function() {
+        let input = r#"fn add(a: Int, b: Int) -> Int {
+  a + b
+}"#;
+        let kinds = tokenize(input);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Fn,
+                TokenKind::Identifier("add".to_string()),
+                TokenKind::LParen,
+                TokenKind::Identifier("a".to_string()),
+                TokenKind::Colon,
+                TokenKind::Identifier("Int".to_string()),
+                TokenKind::Comma,
+                TokenKind::Identifier("b".to_string()),
+                TokenKind::Colon,
+                TokenKind::Identifier("Int".to_string()),
+                TokenKind::RParen,
+                TokenKind::Arrow,
+                TokenKind::Identifier("Int".to_string()),
+                TokenKind::LBrace,
+                TokenKind::Identifier("a".to_string()),
+                TokenKind::Plus,
+                TokenKind::Identifier("b".to_string()),
+                TokenKind::RBrace,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn real_pact_pipeline() {
+        let input = "users\n  | filter where .active\n  | map to .name\n  | sort by .name";
+        let kinds = tokenize(input);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Identifier("users".to_string()),
+                TokenKind::Pipe,
+                TokenKind::Identifier("filter".to_string()),
+                TokenKind::Identifier("where".to_string()),
+                TokenKind::Dot,
+                TokenKind::Identifier("active".to_string()),
+                TokenKind::Pipe,
+                TokenKind::Identifier("map".to_string()),
+                TokenKind::Identifier("to".to_string()),
+                TokenKind::Dot,
+                TokenKind::Identifier("name".to_string()),
+                TokenKind::Pipe,
+                TokenKind::Identifier("sort".to_string()),
+                TokenKind::Identifier("by".to_string()),
+                TokenKind::Dot,
+                TokenKind::Identifier("name".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn real_pact_type_with_union() {
+        let input = "type Role = Admin | Editor | Viewer";
+        let kinds = tokenize(input);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Type,
+                TokenKind::Identifier("Role".to_string()),
+                TokenKind::Assign,
+                TokenKind::Identifier("Admin".to_string()),
+                TokenKind::Pipe,
+                TokenKind::Identifier("Editor".to_string()),
+                TokenKind::Pipe,
+                TokenKind::Identifier("Viewer".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn real_pact_check_syntax() {
+        let input = "name: String check { min 1, max 100 }";
+        let kinds = tokenize(input);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Identifier("name".to_string()),
+                TokenKind::Colon,
+                TokenKind::Identifier("String".to_string()),
+                TokenKind::Check,
+                TokenKind::LBrace,
+                TokenKind::Identifier("min".to_string()),
+                TokenKind::IntLiteral(1),
+                TokenKind::Comma,
+                TokenKind::Identifier("max".to_string()),
+                TokenKind::IntLiteral(100),
+                TokenKind::RBrace,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn real_pact_let_binding() {
+        let input = r#"let name: String = "Vitalii""#;
+        let kinds = tokenize(input);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Let,
+                TokenKind::Identifier("name".to_string()),
+                TokenKind::Colon,
+                TokenKind::Identifier("String".to_string()),
+                TokenKind::Assign,
+                TokenKind::StringStart,
+                TokenKind::StringFragment("Vitalii".to_string()),
+                TokenKind::StringEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn real_pact_match_expression() {
+        let input = "match role {\n  Admin => true,\n  _ => false,\n}";
+        let kinds = tokenize(input);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Match,
+                TokenKind::Identifier("role".to_string()),
+                TokenKind::LBrace,
+                TokenKind::Identifier("Admin".to_string()),
+                TokenKind::FatArrow,
+                TokenKind::BoolLiteral(true),
+                TokenKind::Comma,
+                TokenKind::Underscore,
+                TokenKind::FatArrow,
+                TokenKind::BoolLiteral(false),
+                TokenKind::Comma,
+                TokenKind::RBrace,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn real_pact_route() {
+        let input = r#"route GET "/users/{id}" {
+  find_user(request.params.id)
+    | on success: respond 200 with .
+}"#;
+        let kinds = tokenize(input);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Route,
+                TokenKind::Identifier("GET".to_string()),
+                TokenKind::StringStart,
+                TokenKind::StringFragment("/users/".to_string()),
+                TokenKind::InterpolationStart,
+                TokenKind::Identifier("id".to_string()),
+                TokenKind::InterpolationEnd,
+                TokenKind::StringEnd,
+                TokenKind::LBrace,
+                TokenKind::Identifier("find_user".to_string()),
+                TokenKind::LParen,
+                TokenKind::Identifier("request".to_string()),
+                TokenKind::Dot,
+                TokenKind::Identifier("params".to_string()),
+                TokenKind::Dot,
+                TokenKind::Identifier("id".to_string()),
+                TokenKind::RParen,
+                TokenKind::Pipe,
+                TokenKind::Identifier("on".to_string()),
+                TokenKind::Identifier("success".to_string()),
+                TokenKind::Colon,
+                TokenKind::Identifier("respond".to_string()),
+                TokenKind::IntLiteral(200),
+                TokenKind::Identifier("with".to_string()),
+                TokenKind::Dot,
+                TokenKind::RBrace,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn real_pact_effect_markers() {
+        let input = "fn save(user: User) -> User needs { db } {\n  db.insert(user)\n}";
+        let kinds = tokenize(input);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Fn,
+                TokenKind::Identifier("save".to_string()),
+                TokenKind::LParen,
+                TokenKind::Identifier("user".to_string()),
+                TokenKind::Colon,
+                TokenKind::Identifier("User".to_string()),
+                TokenKind::RParen,
+                TokenKind::Arrow,
+                TokenKind::Identifier("User".to_string()),
+                TokenKind::Needs,
+                TokenKind::LBrace,
+                TokenKind::Identifier("db".to_string()),
+                TokenKind::RBrace,
+                TokenKind::LBrace,
+                TokenKind::Identifier("db".to_string()),
+                TokenKind::Dot,
+                TokenKind::Identifier("insert".to_string()),
+                TokenKind::LParen,
+                TokenKind::Identifier("user".to_string()),
+                TokenKind::RParen,
+                TokenKind::RBrace,
+                TokenKind::Eof,
+            ]
+        );
+    }
 }
