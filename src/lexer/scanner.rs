@@ -279,7 +279,54 @@ impl Lexer {
     // --- Placeholder methods (to be implemented in Tasks 4, 5, 6) ---
 
     fn read_number(&mut self) -> Result<Token, LexerError> {
-        Err(self.error(1, "Not yet implemented", None))
+        let start_pos = self.pos;
+        let start_line = self.line;
+        let start_col = self.column;
+        let mut num_str = String::new();
+        let mut is_float = false;
+
+        // Read integer digits
+        while !self.is_at_end() && self.current().is_ascii_digit() {
+            num_str.push(self.current());
+            self.advance();
+        }
+
+        // Check for decimal point: must be followed by a digit (not another '.' for spread, not a non-digit for field access)
+        if !self.is_at_end() && self.current() == '.' {
+            // Peek at what follows the dot
+            let after_dot = self.peek_at(1);
+            if after_dot.is_some_and(|c| c.is_ascii_digit()) {
+                // It's a float: consume the dot and fractional digits
+                is_float = true;
+                num_str.push(self.current()); // the '.'
+                self.advance();
+                while !self.is_at_end() && self.current().is_ascii_digit() {
+                    num_str.push(self.current());
+                    self.advance();
+                }
+            }
+            // Otherwise, leave the dot for the next token
+        }
+
+        let length = self.pos - start_pos;
+        let span = Span {
+            line: start_line,
+            column: start_col,
+            offset: start_pos,
+            length,
+        };
+
+        if is_float {
+            match num_str.parse::<f64>() {
+                Ok(val) => Ok(Token { kind: TokenKind::FloatLiteral(val), span }),
+                Err(e) => Err(self.error(length, &format!("Invalid float literal '{}': {}", num_str, e), None)),
+            }
+        } else {
+            match num_str.parse::<i64>() {
+                Ok(val) => Ok(Token { kind: TokenKind::IntLiteral(val), span }),
+                Err(e) => Err(self.error(length, &format!("Invalid integer literal '{}': {}", num_str, e), None)),
+            }
+        }
     }
 
     fn read_identifier_or_keyword(&mut self) -> Result<Token, LexerError> {
@@ -485,6 +532,46 @@ mod tests {
         assert_eq!(
             tokenize("+\n-"),
             vec![TokenKind::Plus, TokenKind::Newline, TokenKind::Minus, TokenKind::Eof]
+        );
+    }
+
+    #[test]
+    fn integer_literals() {
+        assert_eq!(
+            tokenize("0 42 1000"),
+            vec![
+                TokenKind::IntLiteral(0),
+                TokenKind::IntLiteral(42),
+                TokenKind::IntLiteral(1000),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn float_literals() {
+        assert_eq!(
+            tokenize("3.14 0.5 100.0"),
+            vec![
+                TokenKind::FloatLiteral(3.14),
+                TokenKind::FloatLiteral(0.5),
+                TokenKind::FloatLiteral(100.0),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn number_followed_by_dot_field() {
+        // 42.foo should be IntLiteral(42), Dot, Identifier("foo")
+        // But identifier lexing isn't done yet, so just test 42. stops at the dot
+        assert_eq!(
+            tokenize("42."),
+            vec![
+                TokenKind::IntLiteral(42),
+                TokenKind::Dot,
+                TokenKind::Eof,
+            ]
         );
     }
 }
