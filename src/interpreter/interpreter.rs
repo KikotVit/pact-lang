@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::ast::{BinaryOp, Expr, Program, Statement, StringExpr, UnaryOp};
+use crate::parser::ast::{BinaryOp, Expr, Program, Statement, StringExpr, StringPart, UnaryOp};
 use super::environment::Environment;
 use super::errors::RuntimeError;
 use super::value::Value;
@@ -112,15 +112,78 @@ impl Interpreter {
             }
             Expr::StringLiteral(string_expr) => match string_expr {
                 StringExpr::Simple(s) => Ok(Value::String(s.clone())),
-                StringExpr::Interpolated(_) => {
-                    Err(self.error("String interpolation is not yet implemented"))
+                StringExpr::Interpolated(parts) => {
+                    let mut result = String::new();
+                    for part in parts {
+                        match part {
+                            StringPart::Literal(s) => result.push_str(s),
+                            StringPart::Expr(expr) => {
+                                let val = self.eval_expr(expr, env)?;
+                                result.push_str(&format!("{}", val));
+                            }
+                        }
+                    }
+                    Ok(Value::String(result))
                 }
             },
-            Expr::FieldAccess { .. } => {
-                Err(self.error("Field access is not yet implemented"))
+            Expr::FieldAccess { object, field } => {
+                let obj = self.eval_expr(object, env)?;
+                match &obj {
+                    Value::Struct { fields, .. } => {
+                        fields.get(field).cloned().ok_or_else(|| {
+                            self.error(&format!(
+                                "Struct has no field '{}'",
+                                field
+                            ))
+                        })
+                    }
+                    Value::Effect { methods, .. } => {
+                        methods.get(field).cloned().ok_or_else(|| {
+                            self.error(&format!(
+                                "Effect has no method '{}'",
+                                field
+                            ))
+                        })
+                    }
+                    _ => Err(self.error(&format!(
+                        "Cannot access field on {} type",
+                        obj.type_name()
+                    ))),
+                }
             }
-            Expr::DotShorthand(_) => {
-                Err(self.error("Dot shorthand is not yet implemented"))
+            Expr::DotShorthand(parts) => {
+                let mut val = env
+                    .lookup("_it")
+                    .or_else(|| self.global.lookup("_it"))
+                    .cloned()
+                    .ok_or_else(|| {
+                        let mut err = self.error("Variable '_it' not found");
+                        err.hint = Some(
+                            "Dot shorthand (.field) can only be used inside pipeline steps"
+                                .to_string(),
+                        );
+                        err
+                    })?;
+                for field in parts {
+                    val = match &val {
+                        Value::Struct { fields, .. } => {
+                            fields.get(field).cloned().ok_or_else(|| {
+                                self.error(&format!(
+                                    "Struct has no field '{}'",
+                                    field
+                                ))
+                            })?
+                        }
+                        _ => {
+                            return Err(self.error(&format!(
+                                "Cannot access field '{}' on {} type",
+                                field,
+                                val.type_name()
+                            )));
+                        }
+                    };
+                }
+                Ok(val)
             }
             Expr::BinaryOp { left, op, right } => {
                 let left_val = self.eval_expr(left, env)?;
@@ -450,4 +513,39 @@ mod tests {
         assert_eq!(eval("(1 + 2) * 3 - 4"), Value::Int(5));
     }
 
+    // Task 4: Field access, dot shorthand, string evaluation
+
+    #[test]
+    fn eval_simple_string() {
+        assert_eq!(eval(r#""hello""#), Value::String("hello".to_string()));
+    }
+
+    #[test]
+    fn eval_empty_string() {
+        assert_eq!(eval(r#""""#), Value::String(String::new()));
+    }
+
+    #[test]
+    fn eval_string_interpolation() {
+        assert_eq!(
+            eval("let name: String = \"world\"\n\"hello {name}\""),
+            Value::String("hello world".to_string()),
+        );
+    }
+
+    #[test]
+    fn eval_raw_string() {
+        assert_eq!(
+            eval(r#"raw"no {interp}""#),
+            Value::String("no {interp}".to_string())
+        );
+    }
+
+    #[test]
+    fn eval_string_interpolation_with_expr() {
+        assert_eq!(
+            eval("let x: Int = 5\n\"x is {x + 1}\""),
+            Value::String("x is 6".to_string()),
+        );
+    }
 }
