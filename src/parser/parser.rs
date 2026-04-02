@@ -654,7 +654,12 @@ impl Parser {
             TokenKind::Var => self.parse_let_or_var(true)?,
             TokenKind::Return => self.parse_return()?,
             TokenKind::Use => self.parse_use()?,
-            TokenKind::Fn => self.parse_fn_decl(None)?,
+            TokenKind::Fn => {
+                return Err(self.error(
+                    "Missing 'intent' block before function declaration",
+                    Some("every fn requires intent \"description\" on the line above"),
+                ));
+            }
             TokenKind::Intent => {
                 self.advance(); // consume intent
                 let intent = self.parse_intent_string()?;
@@ -1502,7 +1507,7 @@ mod tests {
 
     #[test]
     fn parse_simple_fn() {
-        let prog = parse_program("fn add(a: Int, b: Int) -> Int {\n  a + b\n}");
+        let prog = parse_program("intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}");
         if let Statement::FnDecl { name, params, return_type, body, .. } = &prog.statements[0] {
             assert_eq!(name, "add");
             assert_eq!(params.len(), 2);
@@ -1520,8 +1525,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_fn_without_intent_is_error() {
+        let input = "fn foo() -> Int {\n  1\n}";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let err = parser.parse().unwrap_err();
+        assert!(err[0].message.contains("Missing 'intent'"));
+    }
+
+    #[test]
     fn parse_fn_with_needs() {
-        let prog = parse_program("fn save(user: User) -> User needs db {\n  user\n}");
+        let prog = parse_program("intent \"save user to database\"\nfn save(user: User) -> User needs db {\n  user\n}");
         if let Statement::FnDecl { effects, .. } = &prog.statements[0] {
             assert_eq!(effects, &["db"]);
         } else { panic!("Expected FnDecl"); }
@@ -1529,7 +1544,7 @@ mod tests {
 
     #[test]
     fn parse_fn_with_error_types() {
-        let prog = parse_program("fn find(id: ID) -> User or NotFound needs db {\n  id\n}");
+        let prog = parse_program("intent \"find user by ID\"\nfn find(id: ID) -> User or NotFound needs db {\n  id\n}");
         if let Statement::FnDecl { error_types, return_type, .. } = &prog.statements[0] {
             assert!(return_type.is_some());
             assert_eq!(error_types, &["NotFound"]);
@@ -1538,7 +1553,7 @@ mod tests {
 
     #[test]
     fn parse_fn_no_params_no_return() {
-        let prog = parse_program("fn greet() {\n  nothing\n}");
+        let prog = parse_program("intent \"greet the user\"\nfn greet() {\n  nothing\n}");
         if let Statement::FnDecl { params, return_type, .. } = &prog.statements[0] {
             assert_eq!(params.len(), 0);
             assert!(return_type.is_none());
@@ -1547,7 +1562,7 @@ mod tests {
 
     #[test]
     fn parse_fn_needs_multiple_effects() {
-        let prog = parse_program("fn save(user: User) -> User needs db, time, rng {\n  user\n}");
+        let prog = parse_program("intent \"save user with multiple effects\"\nfn save(user: User) -> User needs db, time, rng {\n  user\n}");
         if let Statement::FnDecl { effects, .. } = &prog.statements[0] {
             assert_eq!(effects, &["db", "time", "rng"]);
         } else { panic!("Expected FnDecl"); }
@@ -1555,7 +1570,7 @@ mod tests {
 
     #[test]
     fn parse_fn_needs_single_effect() {
-        let prog = parse_program("fn save(user: User) -> User needs db {\n  user\n}");
+        let prog = parse_program("intent \"save user to db\"\nfn save(user: User) -> User needs db {\n  user\n}");
         if let Statement::FnDecl { effects, .. } = &prog.statements[0] {
             assert_eq!(effects, &["db"]);
         } else { panic!("Expected FnDecl"); }
@@ -1564,7 +1579,7 @@ mod tests {
     #[test]
     fn error_message_includes_block_context() {
         // Intentionally malformed: missing closing brace for function
-        let input = "fn foo() {\n  42\n";
+        let input = "intent \"do something\"\nfn foo() {\n  42\n";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens, input);
@@ -1642,7 +1657,8 @@ mod tests {
 
     #[test]
     fn integration_pact_function_with_pipeline() {
-        let input = r#"fn active_admins(users: List<User>) -> List<String> {
+        let input = r#"intent "get names of active admins"
+fn active_admins(users: List<User>) -> List<String> {
   users
     | filter where .active
     | filter where .role == Admin
@@ -1668,6 +1684,7 @@ mod tests {
     fn integration_type_and_function() {
         let input = r#"type Role = Admin | Editor | Viewer
 
+intent "check if role is admin"
 fn is_admin(role: Role) -> Bool {
   match role {
     Admin => true,
@@ -1693,7 +1710,8 @@ fn is_admin(role: Role) -> Bool {
 
     #[test]
     fn integration_fn_with_ensure_and_return_if() {
-        let input = r#"fn withdraw(account: Account, amount: Int) -> Account or InsufficientFunds {
+        let input = r#"intent "withdraw amount from account"
+fn withdraw(account: Account, amount: Int) -> Account or InsufficientFunds {
   ensure amount > 0
   return InsufficientFunds if account.balance < amount
   Account { ...account, balance: account.balance - amount }

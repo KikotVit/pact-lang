@@ -1417,22 +1417,22 @@ mod tests {
 
     #[test]
     fn eval_simple_function() {
-        assert_eq!(eval("fn add(a: Int, b: Int) -> Int {\n  a + b\n}\nadd(1, 2)"), Value::Int(3));
+        assert_eq!(eval("intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\nadd(1, 2)"), Value::Int(3));
     }
 
     #[test]
     fn eval_function_multiple_stmts() {
-        assert_eq!(eval("fn double(x: Int) -> Int {\n  let r: Int = x * 2\n  r\n}\ndouble(5)"), Value::Int(10));
+        assert_eq!(eval("intent \"double a number\"\nfn double(x: Int) -> Int {\n  let r: Int = x * 2\n  r\n}\ndouble(5)"), Value::Int(10));
     }
 
     #[test]
     fn eval_nested_calls() {
-        assert_eq!(eval("fn add(a: Int, b: Int) -> Int {\n  a + b\n}\nfn double(x: Int) -> Int {\n  add(x, x)\n}\ndouble(3)"), Value::Int(6));
+        assert_eq!(eval("intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\nintent \"double a number\"\nfn double(x: Int) -> Int {\n  add(x, x)\n}\ndouble(3)"), Value::Int(6));
     }
 
     #[test]
     fn eval_recursive_function() {
-        let input = "fn fact(n: Int) -> Int {\n  if n <= 1 {\n    1\n  } else {\n    n * fact(n - 1)\n  }\n}\nfact(5)";
+        let input = "intent \"compute factorial\"\nfn fact(n: Int) -> Int {\n  if n <= 1 {\n    1\n  } else {\n    n * fact(n - 1)\n  }\n}\nfact(5)";
         assert_eq!(eval(input), Value::Int(120));
     }
 
@@ -1463,7 +1463,7 @@ mod tests {
 
     #[test]
     fn eval_early_return() {
-        let input = "fn verify(x: Int) -> Int {\n  if x > 0 {\n    return x\n  }\n  0\n}\nverify(5)";
+        let input = "intent \"verify positive number\"\nfn verify(x: Int) -> Int {\n  if x > 0 {\n    return x\n  }\n  0\n}\nverify(5)";
         assert_eq!(eval(input), Value::Int(5));
     }
 
@@ -1704,12 +1704,12 @@ mod tests {
 
     #[test]
     fn integration_simple_function() {
-        assert_eq!(eval("fn add(a: Int, b: Int) -> Int {\n  a + b\n}\nadd(3, 4)"), Value::Int(7));
+        assert_eq!(eval("intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\nadd(3, 4)"), Value::Int(7));
     }
 
     #[test]
     fn integration_function_with_if() {
-        let input = "fn max(a: Int, b: Int) -> Int {\n  if a > b {\n    a\n  } else {\n    b\n  }\n}\nmax(3, 7)";
+        let input = "intent \"return the larger of two numbers\"\nfn max(a: Int, b: Int) -> Int {\n  if a > b {\n    a\n  } else {\n    b\n  }\n}\nmax(3, 7)";
         assert_eq!(eval(input), Value::Int(7));
     }
 
@@ -1722,7 +1722,8 @@ user.active"#;
 
     #[test]
     fn integration_match_expression() {
-        let input = r#"fn describe(x: Int) -> String {
+        let input = r#"intent "describe a number"
+fn describe(x: Int) -> String {
   match x {
     0 => "zero",
     1 => "one",
@@ -1735,7 +1736,7 @@ describe(1)"#;
 
     #[test]
     fn integration_ensure_passes() {
-        let input = "fn safe_div(a: Int, b: Int) -> Int {\n  ensure b != 0\n  a / b\n}\nsafe_div(10, 2)";
+        let input = "intent \"divide safely with zero check\"\nfn safe_div(a: Int, b: Int) -> Int {\n  ensure b != 0\n  a / b\n}\nsafe_div(10, 2)";
         assert_eq!(eval(input), Value::Int(5));
     }
 
@@ -1752,7 +1753,7 @@ describe(1)"#;
 
     #[test]
     fn integration_recursive_fibonacci() {
-        let input = "fn fib(n: Int) -> Int {\n  if n <= 1 {\n    n\n  } else {\n    fib(n - 1) + fib(n - 2)\n  }\n}\nfib(10)";
+        let input = "intent \"compute fibonacci number\"\nfn fib(n: Int) -> Int {\n  if n <= 1 {\n    n\n  } else {\n    fib(n - 1) + fib(n - 2)\n  }\n}\nfib(10)";
         assert_eq!(eval(input), Value::Int(55));
     }
 
@@ -1782,13 +1783,13 @@ user.address.city"#;
 
     #[test]
     fn integration_effects_time() {
-        let input = "fn get_time() -> String needs time {\n  time.now()\n}\nget_time()";
+        let input = "intent \"get current time\"\nfn get_time() -> String needs time {\n  time.now()\n}\nget_time()";
         assert_eq!(eval_with_effects(input), Value::String("2026-04-02T12:00:00Z".to_string()));
     }
 
     #[test]
     fn integration_effects_rng() {
-        let input = "fn make_id() -> String needs rng {\n  rng.uuid()\n}\nmake_id()";
+        let input = "intent \"generate a unique ID\"\nfn make_id() -> String needs rng {\n  rng.uuid()\n}\nmake_id()";
         let result = eval_with_effects(input);
         assert!(matches!(result, Value::String(s) if s.starts_with("uuid-")));
     }
@@ -1900,7 +1901,8 @@ test "also passes" {
 
     #[test]
     fn eval_test_with_fn_and_assert() {
-        let input = r#"fn add(a: Int, b: Int) -> Int {
+        let input = r#"intent "add two numbers"
+fn add(a: Int, b: Int) -> Int {
   a + b
 }
 test "add works" {
@@ -1940,7 +1942,7 @@ test "add works" {
         let _ = fs::create_dir_all(dir.join("math"));
         fs::write(
             dir.join("math/ops.pact"),
-            "fn add(a: Int, b: Int) -> Int {\n  a + b\n}\n",
+            "intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\n",
         )
         .unwrap();
 
@@ -1965,7 +1967,7 @@ test "add works" {
         let _ = fs::create_dir_all(dir.join("utils"));
         fs::write(
             dir.join("utils/math.pact"),
-            "fn add(a: Int, b: Int) -> Int { a + b }\nfn mul(a: Int, b: Int) -> Int { a * b }\n",
+            "intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int { a + b }\nintent \"multiply two numbers\"\nfn mul(a: Int, b: Int) -> Int { a * b }\n",
         )
         .unwrap();
 
@@ -2003,7 +2005,7 @@ test "add works" {
         let _ = fs::create_dir_all(dir.join("lib"));
         fs::write(
             dir.join("lib/counter.pact"),
-            "fn get_value() -> Int { 42 }\n",
+            "intent \"get the counter value\"\nfn get_value() -> Int { 42 }\n",
         )
         .unwrap();
 
