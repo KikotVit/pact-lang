@@ -31,6 +31,15 @@ pub enum Statement {
         condition: Option<Expr>,
     },
     Expression(Expr),
+    TestBlock {
+        name: String,
+        body: Vec<Statement>,
+    },
+    Using {
+        name: String,
+        value: Expr,
+    },
+    Assert(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -147,6 +156,7 @@ pub enum PipelineStep {
     Unique,
     Count,
     Sum,
+    ExpectSuccess,
     Expr(Expr),
 }
 

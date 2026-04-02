@@ -12,9 +12,63 @@ fn main() {
     if args.len() < 2 {
         eprintln!("Usage: pact <file.pact> [--ast]");
         eprintln!("       pact run <file.pact>    Execute a .pact file");
+        eprintln!("       pact test <file.pact>   Run test blocks in a .pact file");
         eprintln!("  Tokenizes a .pact file and prints the token stream.");
         eprintln!("  --ast  Parse and print the AST instead of tokens.");
         process::exit(1);
+    }
+
+    // pact test <file>
+    if args.len() >= 3 && args[1] == "test" {
+        let filename = &args[2];
+        let source = match fs::read_to_string(filename) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error reading '{}': {}", filename, e);
+                process::exit(1);
+            }
+        };
+
+        let mut lexer = Lexer::new(&source);
+        let tokens = match lexer.tokenize() {
+            Ok(t) => t,
+            Err(e) => { eprintln!("{}", e); process::exit(1); }
+        };
+
+        let mut parser = Parser::new(tokens, &source);
+        let program = match parser.parse() {
+            Ok(p) => p,
+            Err(errors) => {
+                for e in &errors { eprintln!("{}", e); }
+                process::exit(1);
+            }
+        };
+
+        let mut interp = Interpreter::new(&source);
+        interp.setup_test_effects();
+        let results = interp.run_tests(&program);
+
+        let total = results.len();
+        let passed = results.iter().filter(|r| r.passed).count();
+        let failed = total - passed;
+
+        for result in &results {
+            if result.passed {
+                println!("\u{2713} {}", result.name);
+            } else {
+                println!("\u{2717} {}", result.name);
+                if let Some(ref err) = result.error {
+                    println!("  {}", err);
+                }
+            }
+        }
+
+        println!("\n{} tests, {} passed, {} failed", total, passed, failed);
+
+        if failed > 0 {
+            process::exit(1);
+        }
+        return;
     }
 
     // pact run <file>

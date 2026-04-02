@@ -1,4 +1,4 @@
-use crate::lexer::{Token, TokenKind, Lexer};
+use crate::lexer::{Token, TokenKind};
 use crate::parser::ast::*;
 use crate::parser::errors::ParseError;
 
@@ -256,7 +256,9 @@ impl Parser {
                 }
                 "expect" => {
                     self.advance();
-                    if self.eat_contextual("one") {
+                    if self.eat_contextual("success") {
+                        Ok(PipelineStep::ExpectSuccess)
+                    } else if self.eat_contextual("one") {
                         self.expect(&TokenKind::Or)?;
                         self.expect_contextual("raise")?;
                         let error = self.parse_or()?;
@@ -268,7 +270,7 @@ impl Parser {
                         Ok(PipelineStep::ExpectAny { error })
                     } else {
                         self.fail(
-                            &format!("Expected 'one' or 'any' after 'expect', found {:?}", self.current_kind()),
+                            &format!("Expected 'success', 'one', or 'any' after 'expect', found {:?}", self.current_kind()),
                             None,
                         )
                     }
@@ -660,6 +662,19 @@ impl Parser {
                 self.parse_fn_decl(Some(intent))?
             }
             TokenKind::Type => self.parse_type_decl_stmt()?,
+            TokenKind::Test => self.parse_test_block()?,
+            TokenKind::Identifier(word) if word == "using" => {
+                self.advance(); // consume "using"
+                let name = self.expect_identifier()?;
+                self.expect(&TokenKind::Assign)?;
+                let value = self.parse_expression()?;
+                Statement::Using { name, value }
+            }
+            TokenKind::Identifier(word) if word == "assert" => {
+                self.advance(); // consume "assert"
+                let expr = self.parse_expression()?;
+                Statement::Assert(expr)
+            }
             _ => {
                 let expr = self.parse_expression()?;
                 Statement::Expression(expr)
@@ -703,6 +718,16 @@ impl Parser {
             path.push(self.expect_identifier()?);
         }
         Ok(Statement::Use { path })
+    }
+
+    fn parse_test_block(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // consume `test`
+        let name = self.parse_intent_string()?; // reuse intent string parser for test name
+        self.push_block("test");
+        self.expect(&TokenKind::LBrace)?;
+        let body = self.parse_block_body()?;
+        self.expect_closing_brace()?;
+        Ok(Statement::TestBlock { name, body })
     }
 
     fn parse_fn_decl(&mut self, intent: Option<String>) -> Result<Statement, ParseError> {
@@ -982,6 +1007,7 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lexer::Lexer;
 
     fn parse_expr(input: &str) -> Expr {
         let mut lexer = Lexer::new(input);
@@ -1739,6 +1765,77 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
             assert_eq!(variants[0].fields.as_ref().unwrap()[0].name, "resource");
         } else {
             panic!("Expected Union TypeDecl");
+        }
+    }
+
+    // --- Test block, using, assert parsing ---
+
+    #[test]
+    fn parse_test_block() {
+        let prog = parse_program("test \"basic\" {\n  assert true\n}");
+        assert!(matches!(&prog.statements[0], Statement::TestBlock { .. }));
+        if let Statement::TestBlock { name, body } = &prog.statements[0] {
+            assert_eq!(name, "basic");
+            assert_eq!(body.len(), 1);
+            assert!(matches!(&body[0], Statement::Assert(_)));
+        }
+    }
+
+    #[test]
+    fn parse_test_block_with_multiple_asserts() {
+        let input = r#"test "math" {
+  assert 1 + 1 == 2
+  assert 2 * 3 == 6
+}"#;
+        let prog = parse_program(input);
+        if let Statement::TestBlock { name, body } = &prog.statements[0] {
+            assert_eq!(name, "math");
+            assert_eq!(body.len(), 2);
+        } else {
+            panic!("Expected TestBlock");
+        }
+    }
+
+    #[test]
+    fn parse_using_statement() {
+        let prog = parse_program("using db = db.memory()");
+        assert!(matches!(&prog.statements[0], Statement::Using { .. }));
+        if let Statement::Using { name, .. } = &prog.statements[0] {
+            assert_eq!(name, "db");
+        }
+    }
+
+    #[test]
+    fn parse_assert_statement() {
+        let prog = parse_program("assert 1 == 1");
+        assert!(matches!(&prog.statements[0], Statement::Assert(_)));
+    }
+
+    #[test]
+    fn parse_expect_success_pipeline() {
+        let input = r#"42 | expect success"#;
+        let expr = parse_expr(input);
+        if let Expr::Pipeline { steps, .. } = &expr {
+            assert!(matches!(&steps[0], PipelineStep::ExpectSuccess));
+        } else {
+            panic!("Expected Pipeline");
+        }
+    }
+
+    #[test]
+    fn parse_test_block_with_using() {
+        let input = r#"test "with effects" {
+  using db = db.memory()
+  assert true
+}"#;
+        let prog = parse_program(input);
+        if let Statement::TestBlock { name, body } = &prog.statements[0] {
+            assert_eq!(name, "with effects");
+            assert_eq!(body.len(), 2);
+            assert!(matches!(&body[0], Statement::Using { .. }));
+            assert!(matches!(&body[1], Statement::Assert(_)));
+        } else {
+            panic!("Expected TestBlock");
         }
     }
 }
