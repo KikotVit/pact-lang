@@ -1465,4 +1465,97 @@ mod tests {
             Value::String("Bob".to_string()),
         );
     }
+
+    // Task 9: Integration tests — full pipeline: source → lex → parse → interpret
+
+    #[test]
+    fn integration_simple_function() {
+        assert_eq!(eval("fn add(a: Int, b: Int) -> Int {\n  a + b\n}\nadd(3, 4)"), Value::Int(7));
+    }
+
+    #[test]
+    fn integration_function_with_if() {
+        let input = "fn max(a: Int, b: Int) -> Int {\n  if a > b {\n    a\n  } else {\n    b\n  }\n}\nmax(3, 7)";
+        assert_eq!(eval(input), Value::Int(7));
+    }
+
+    #[test]
+    fn integration_struct_and_field_access() {
+        let input = r#"let user: User = User { name: "Vitalii", age: 30, active: true }
+user.active"#;
+        assert_eq!(eval(input), Value::Bool(true));
+    }
+
+    #[test]
+    fn integration_match_expression() {
+        let input = r#"fn describe(x: Int) -> String {
+  match x {
+    0 => "zero",
+    1 => "one",
+    _ => "many",
+  }
+}
+describe(1)"#;
+        assert_eq!(eval(input), Value::String("one".to_string()));
+    }
+
+    #[test]
+    fn integration_ensure_passes() {
+        let input = "fn safe_div(a: Int, b: Int) -> Int {\n  ensure b != 0\n  a / b\n}\nsafe_div(10, 2)";
+        assert_eq!(eval(input), Value::Int(5));
+    }
+
+    #[test]
+    fn integration_pipeline_with_list() {
+        assert_eq!(eval_with_list("list(10, 20, 30) | sum"), Value::Int(60));
+    }
+
+    #[test]
+    fn integration_string_interpolation() {
+        let input = "let name: String = \"PACT\"\nlet version: Int = 1\n\"Welcome to {name} v{version}\"";
+        assert_eq!(eval(input), Value::String("Welcome to PACT v1".to_string()));
+    }
+
+    #[test]
+    fn integration_recursive_fibonacci() {
+        let input = "fn fib(n: Int) -> Int {\n  if n <= 1 {\n    n\n  } else {\n    fib(n - 1) + fib(n - 2)\n  }\n}\nfib(10)";
+        assert_eq!(eval(input), Value::Int(55));
+    }
+
+    #[test]
+    fn integration_pipeline_multi_step() {
+        assert_eq!(
+            eval_with_list("list(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) | skip 5 | take first 3 | sum"),
+            Value::Int(21), // 6 + 7 + 8
+        );
+    }
+
+    #[test]
+    fn integration_struct_spread_update() {
+        let input = r#"let old: User = User { name: "A", age: 1 }
+let new: User = User { ...old, age: 2 }
+new.name"#;
+        assert_eq!(eval(input), Value::String("A".to_string()));
+    }
+
+    #[test]
+    fn integration_nested_field_access() {
+        let input = r#"let addr: Addr = Addr { city: "Kyiv" }
+let user: User = User { name: "V", address: addr }
+user.address.city"#;
+        assert_eq!(eval(input), Value::String("Kyiv".to_string()));
+    }
+
+    #[test]
+    fn integration_effects_time() {
+        let input = "fn get_time() -> String needs time {\n  time.now()\n}\nget_time()";
+        assert_eq!(eval_with_effects(input), Value::String("2026-04-02T12:00:00Z".to_string()));
+    }
+
+    #[test]
+    fn integration_effects_rng() {
+        let input = "fn make_id() -> String needs rng {\n  rng.uuid()\n}\nmake_id()";
+        let result = eval_with_effects(input);
+        assert!(matches!(result, Value::String(s) if s.starts_with("uuid-")));
+    }
 }
