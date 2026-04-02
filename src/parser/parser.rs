@@ -124,7 +124,157 @@ impl Parser {
     }
 
     fn parse_pipeline(&mut self) -> Result<Expr, ParseError> {
-        self.parse_or()
+        let source = self.parse_or()?;
+        if !self.at(&TokenKind::Pipe) {
+            return Ok(source);
+        }
+        let mut steps = Vec::new();
+        while self.eat(&TokenKind::Pipe) {
+            self.skip_newlines();
+            let step = self.parse_pipeline_step()?;
+            steps.push(step);
+        }
+        Ok(Expr::Pipeline { source: Box::new(source), steps })
+    }
+
+    fn parse_pipeline_step(&mut self) -> Result<PipelineStep, ParseError> {
+        // Handle `or default <value>` — `or` is a keyword token, not an identifier
+        if self.at(&TokenKind::Or) {
+            self.advance(); // consume `or`
+            self.expect_contextual("default")?;
+            let value = self.parse_or()?;
+            return Ok(PipelineStep::OrDefault { value });
+        }
+
+        if let TokenKind::Identifier(ref name) = self.current_kind().clone() {
+            match name.as_str() {
+                "filter" => {
+                    self.advance();
+                    self.expect_contextual("where")?;
+                    let predicate = self.parse_or()?;
+                    Ok(PipelineStep::Filter { predicate })
+                }
+                "map" => {
+                    self.advance();
+                    self.expect_contextual("to")?;
+                    let expr = self.parse_or()?;
+                    Ok(PipelineStep::Map { expr })
+                }
+                "sort" => {
+                    self.advance();
+                    self.expect_contextual("by")?;
+                    let field = self.parse_or()?;
+                    let descending = if self.eat_contextual("ascending") {
+                        false
+                    } else if self.eat_contextual("descending") {
+                        true
+                    } else {
+                        false
+                    };
+                    Ok(PipelineStep::Sort { field, descending })
+                }
+                "group" => {
+                    self.advance();
+                    self.expect_contextual("by")?;
+                    let field = self.parse_or()?;
+                    Ok(PipelineStep::GroupBy { field })
+                }
+                "take" => {
+                    self.advance();
+                    let kind = if self.eat_contextual("first") {
+                        TakeKind::First
+                    } else if self.eat_contextual("last") {
+                        TakeKind::Last
+                    } else {
+                        return self.fail(
+                            &format!("Expected 'first' or 'last' after 'take', found {:?}", self.current_kind()),
+                            None,
+                        );
+                    };
+                    let count = self.parse_or()?;
+                    Ok(PipelineStep::Take { kind, count })
+                }
+                "skip" => {
+                    self.advance();
+                    let count = self.parse_or()?;
+                    Ok(PipelineStep::Skip { count })
+                }
+                "each" => {
+                    self.advance();
+                    let expr = self.parse_or()?;
+                    Ok(PipelineStep::Each { expr })
+                }
+                "find" => {
+                    self.advance();
+                    self.expect_contextual("first")?;
+                    self.expect_contextual("where")?;
+                    let predicate = self.parse_or()?;
+                    Ok(PipelineStep::FindFirst { predicate })
+                }
+                "expect" => {
+                    self.advance();
+                    if self.eat_contextual("one") {
+                        self.expect(&TokenKind::Or)?;
+                        self.expect_contextual("raise")?;
+                        let error = self.parse_or()?;
+                        Ok(PipelineStep::ExpectOne { error })
+                    } else if self.eat_contextual("any") {
+                        self.expect(&TokenKind::Or)?;
+                        self.expect_contextual("raise")?;
+                        let error = self.parse_or()?;
+                        Ok(PipelineStep::ExpectAny { error })
+                    } else {
+                        self.fail(
+                            &format!("Expected 'one' or 'any' after 'expect', found {:?}", self.current_kind()),
+                            None,
+                        )
+                    }
+                }
+                "flatten" => {
+                    self.advance();
+                    Ok(PipelineStep::Flatten)
+                }
+                "unique" => {
+                    self.advance();
+                    Ok(PipelineStep::Unique)
+                }
+                "count" => {
+                    self.advance();
+                    Ok(PipelineStep::Count)
+                }
+                "sum" => {
+                    self.advance();
+                    Ok(PipelineStep::Sum)
+                }
+                _ => {
+                    let expr = self.parse_or()?;
+                    Ok(PipelineStep::Expr(expr))
+                }
+            }
+        } else {
+            let expr = self.parse_or()?;
+            Ok(PipelineStep::Expr(expr))
+        }
+    }
+
+    fn expect_contextual(&mut self, word: &str) -> Result<(), ParseError> {
+        if let TokenKind::Identifier(ref w) = self.current_kind().clone() {
+            if w == word {
+                self.advance();
+                return Ok(());
+            }
+        }
+        Err(self.error(&format!("Expected '{}', found {:?}", word, self.current_kind()), None))
+    }
+
+    fn eat_contextual(&mut self, word: &str) -> bool {
+        if let TokenKind::Identifier(ref w) = self.current_kind().clone() {
+            if w == word {
+                self.advance();
+                return true;
+            }
+        }
+        false
     }
 
     fn parse_or(&mut self) -> Result<Expr, ParseError> {
@@ -647,5 +797,96 @@ mod tests {
     #[test]
     fn parse_empty_string() {
         assert_eq!(parse_expr(r#""""#), Expr::StringLiteral(StringExpr::Simple(String::new())));
+    }
+
+    // --- Pipeline tests ---
+
+    #[test]
+    fn parse_simple_pipeline() {
+        let expr = parse_expr("users | count");
+        assert!(matches!(expr, Expr::Pipeline { .. }));
+        if let Expr::Pipeline { source, steps } = expr {
+            assert!(matches!(*source, Expr::Identifier(ref n) if n == "users"));
+            assert_eq!(steps.len(), 1);
+            assert!(matches!(steps[0], PipelineStep::Count));
+        }
+    }
+
+    #[test]
+    fn parse_filter_where() {
+        let expr = parse_expr("users | filter where .active");
+        if let Expr::Pipeline { steps, .. } = expr {
+            assert!(matches!(&steps[0], PipelineStep::Filter { .. }));
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_map_to() {
+        let expr = parse_expr("users | map to .name");
+        if let Expr::Pipeline { steps, .. } = expr {
+            assert!(matches!(&steps[0], PipelineStep::Map { .. }));
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_sort_by_ascending() {
+        let expr = parse_expr("users | sort by .name ascending");
+        if let Expr::Pipeline { steps, .. } = expr {
+            if let PipelineStep::Sort { descending, .. } = &steps[0] {
+                assert!(!descending);
+            } else { panic!("Expected Sort"); }
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_sort_by_descending() {
+        let expr = parse_expr("users | sort by .name descending");
+        if let Expr::Pipeline { steps, .. } = expr {
+            if let PipelineStep::Sort { descending, .. } = &steps[0] {
+                assert!(descending);
+            } else { panic!("Expected Sort"); }
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_multi_step_pipeline() {
+        let expr = parse_expr("users\n  | filter where .active\n  | map to .name\n  | sort by .name");
+        if let Expr::Pipeline { steps, .. } = expr {
+            assert_eq!(steps.len(), 3);
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_pipeline_expr_fallback() {
+        let expr = parse_expr("request | api_pipeline");
+        if let Expr::Pipeline { steps, .. } = expr {
+            assert!(matches!(&steps[0], PipelineStep::Expr(_)));
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_or_default_pipeline() {
+        let expr = parse_expr("x | or default 1");
+        if let Expr::Pipeline { steps, .. } = expr {
+            assert!(matches!(&steps[0], PipelineStep::OrDefault { .. }));
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_take_first() {
+        let expr = parse_expr("users | take first 10");
+        if let Expr::Pipeline { steps, .. } = expr {
+            assert!(matches!(&steps[0], PipelineStep::Take { kind: TakeKind::First, .. }));
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_pipeline_flatten_unique() {
+        let expr = parse_expr("items | flatten | unique");
+        if let Expr::Pipeline { steps, .. } = expr {
+            assert_eq!(steps.len(), 2);
+            assert!(matches!(steps[0], PipelineStep::Flatten));
+            assert!(matches!(steps[1], PipelineStep::Unique));
+        } else { panic!("Expected Pipeline"); }
     }
 }
