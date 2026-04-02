@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::ast::{BinaryOp, Expr, MatchArm, Pattern, Program, Statement, StringExpr, StringPart, StructField, UnaryOp};
+use crate::parser::ast::{BinaryOp, Expr, MatchArm, Pattern, PipelineStep, Program, Statement, StringExpr, StringPart, StructField, TakeKind, UnaryOp};
 use super::environment::Environment;
 use super::errors::RuntimeError;
 use super::value::Value;
@@ -14,10 +14,10 @@ pub enum StmtResult {
 pub struct Interpreter {
     pub global: Environment,
     source: String,
-    db_storage: HashMap<String, Vec<Value>>,
-    fixed_time: Option<String>,
-    rng_seed: Option<u64>,
-    rng_counter: u64,
+    pub db_storage: HashMap<String, Vec<Value>>,
+    pub fixed_time: Option<String>,
+    pub rng_seed: Option<u64>,
+    pub rng_counter: u64,
     /// Storage for return value when propagating returns through expressions
     pending_return: Option<Value>,
 }
@@ -369,7 +369,7 @@ impl Interpreter {
                 self.eval_fn_call(callee, args, env)
             }
             Expr::Pipeline { .. } => {
-                Err(self.error("Pipelines are not yet implemented"))
+                self.eval_pipeline(expr, env)
             }
             Expr::If { condition, then_body, else_body } => {
                 self.eval_if(condition, then_body, else_body, env)
@@ -452,8 +452,347 @@ impl Interpreter {
         }
     }
 
-    fn call_builtin(&mut self, name: &str, _args: Vec<Value>) -> Result<Value, RuntimeError> {
-        Err(self.error(&format!("Builtin function '{}' is not yet implemented", name)))
+    // --- Pipeline execution ---
+
+    fn eval_pipeline(&mut self, expr: &Expr, env: &mut Environment) -> Result<Value, RuntimeError> {
+        if let Expr::Pipeline { source, steps } = expr {
+            let mut current = self.eval_expr(source, env)?;
+            for step in steps {
+                current = self.execute_pipeline_step(step, current, env)?;
+            }
+            Ok(current)
+        } else {
+            unreachable!()
+        }
+    }
+
+    fn execute_pipeline_step(
+        &mut self,
+        step: &PipelineStep,
+        current: Value,
+        env: &mut Environment,
+    ) -> Result<Value, RuntimeError> {
+        match step {
+            PipelineStep::Filter { predicate } => {
+                let items = self.require_list(&current, "filter")?;
+                let mut result = Vec::new();
+                for item in items {
+                    let mut child_env = Environment::with_parent(env.clone());
+                    child_env.bind("_it".to_string(), item.clone(), false);
+                    let val = self.eval_expr(predicate, &mut child_env)?;
+                    if val.is_truthy() {
+                        result.push(item);
+                    }
+                }
+                Ok(Value::List(result))
+            }
+            PipelineStep::Map { expr } => {
+                let items = self.require_list(&current, "map")?;
+                let mut result = Vec::new();
+                for item in items {
+                    let mut child_env = Environment::with_parent(env.clone());
+                    child_env.bind("_it".to_string(), item, false);
+                    let val = self.eval_expr(expr, &mut child_env)?;
+                    result.push(val);
+                }
+                Ok(Value::List(result))
+            }
+            PipelineStep::Sort { field, descending } => {
+                let items = self.require_list(&current, "sort")?;
+                let mut keyed: Vec<(Value, Value)> = Vec::new();
+                for item in items {
+                    let mut child_env = Environment::with_parent(env.clone());
+                    child_env.bind("_it".to_string(), item.clone(), false);
+                    let key = self.eval_expr(field, &mut child_env)?;
+                    keyed.push((key, item));
+                }
+                keyed.sort_by(|(a, _), (b, _)| {
+                    match (a, b) {
+                        (Value::Int(x), Value::Int(y)) => x.cmp(y),
+                        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+                        (Value::String(x), Value::String(y)) => x.cmp(y),
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                });
+                if *descending {
+                    keyed.reverse();
+                }
+                Ok(Value::List(keyed.into_iter().map(|(_, v)| v).collect()))
+            }
+            PipelineStep::Each { expr } => {
+                let items = self.require_list(&current, "each")?;
+                for item in &items {
+                    let mut child_env = Environment::with_parent(env.clone());
+                    child_env.bind("_it".to_string(), item.clone(), false);
+                    self.eval_expr(expr, &mut child_env)?;
+                }
+                Ok(Value::List(items))
+            }
+            PipelineStep::Count => {
+                let items = self.require_list(&current, "count")?;
+                Ok(Value::Int(items.len() as i64))
+            }
+            PipelineStep::Sum => {
+                let items = self.require_list(&current, "sum")?;
+                let mut int_sum: i64 = 0;
+                let mut float_sum: f64 = 0.0;
+                let mut has_float = false;
+                for item in &items {
+                    match item {
+                        Value::Int(n) => int_sum += n,
+                        Value::Float(f) => {
+                            float_sum += f;
+                            has_float = true;
+                        }
+                        _ => return Err(self.error(&format!(
+                            "Cannot sum {} values",
+                            item.type_name()
+                        ))),
+                    }
+                }
+                if has_float {
+                    Ok(Value::Float(int_sum as f64 + float_sum))
+                } else {
+                    Ok(Value::Int(int_sum))
+                }
+            }
+            PipelineStep::Flatten => {
+                let items = self.require_list(&current, "flatten")?;
+                let mut result = Vec::new();
+                for item in items {
+                    match item {
+                        Value::List(inner) => result.extend(inner),
+                        other => result.push(other),
+                    }
+                }
+                Ok(Value::List(result))
+            }
+            PipelineStep::Unique => {
+                let items = self.require_list(&current, "unique")?;
+                let mut result: Vec<Value> = Vec::new();
+                for item in items {
+                    if !result.contains(&item) {
+                        result.push(item);
+                    }
+                }
+                Ok(Value::List(result))
+            }
+            PipelineStep::GroupBy { field } => {
+                let items = self.require_list(&current, "group by")?;
+                // Compute keys for all items
+                let mut keyed: Vec<(Value, Value)> = Vec::new();
+                for item in items {
+                    let mut child_env = Environment::with_parent(env.clone());
+                    child_env.bind("_it".to_string(), item.clone(), false);
+                    let key = self.eval_expr(field, &mut child_env)?;
+                    keyed.push((key, item));
+                }
+                // Group by key, preserving order of first appearance
+                let mut group_keys: Vec<Value> = Vec::new();
+                let mut groups: Vec<Vec<Value>> = Vec::new();
+                for (key, val) in keyed {
+                    if let Some(idx) = group_keys.iter().position(|k| k == &key) {
+                        groups[idx].push(val);
+                    } else {
+                        group_keys.push(key);
+                        groups.push(vec![val]);
+                    }
+                }
+                // Build Group structs
+                let mut result = Vec::new();
+                for (key, values) in group_keys.into_iter().zip(groups) {
+                    let mut fields = HashMap::new();
+                    fields.insert("key".to_string(), key);
+                    fields.insert("values".to_string(), Value::List(values));
+                    result.push(Value::Struct {
+                        type_name: "Group".to_string(),
+                        fields,
+                    });
+                }
+                Ok(Value::List(result))
+            }
+            PipelineStep::Take { kind, count } => {
+                let items = self.require_list(&current, "take")?;
+                let n = self.eval_expr(count, env)?;
+                let n = match n {
+                    Value::Int(i) => i as usize,
+                    _ => return Err(self.error("take count must be an integer")),
+                };
+                let result = match kind {
+                    TakeKind::First => items.into_iter().take(n).collect(),
+                    TakeKind::Last => {
+                        let len = items.len();
+                        if n >= len {
+                            items
+                        } else {
+                            items.into_iter().skip(len - n).collect()
+                        }
+                    }
+                };
+                Ok(Value::List(result))
+            }
+            PipelineStep::Skip { count } => {
+                let items = self.require_list(&current, "skip")?;
+                let n = self.eval_expr(count, env)?;
+                let n = match n {
+                    Value::Int(i) => i as usize,
+                    _ => return Err(self.error("skip count must be an integer")),
+                };
+                Ok(Value::List(items.into_iter().skip(n).collect()))
+            }
+            PipelineStep::FindFirst { predicate } => {
+                let items = self.require_list(&current, "find first")?;
+                for item in items {
+                    let mut child_env = Environment::with_parent(env.clone());
+                    child_env.bind("_it".to_string(), item.clone(), false);
+                    let val = self.eval_expr(predicate, &mut child_env)?;
+                    if val.is_truthy() {
+                        return Ok(Value::Ok(Box::new(item)));
+                    }
+                }
+                Ok(Value::Nothing)
+            }
+            PipelineStep::ExpectOne { error } => {
+                let items = self.require_list(&current, "expect one")?;
+                if items.len() == 1 {
+                    Ok(Value::Ok(Box::new(items.into_iter().next().unwrap())))
+                } else {
+                    let err_val = self.eval_expr(error, env)?;
+                    let variant = match err_val {
+                        Value::String(s) => s,
+                        _ => format!("{}", err_val),
+                    };
+                    Ok(Value::Error {
+                        variant,
+                        fields: None,
+                    })
+                }
+            }
+            PipelineStep::ExpectAny { error } => {
+                let items = self.require_list(&current, "expect any")?;
+                if !items.is_empty() {
+                    Ok(Value::Ok(Box::new(Value::List(items))))
+                } else {
+                    let err_val = self.eval_expr(error, env)?;
+                    let variant = match err_val {
+                        Value::String(s) => s,
+                        _ => format!("{}", err_val),
+                    };
+                    Ok(Value::Error {
+                        variant,
+                        fields: None,
+                    })
+                }
+            }
+            PipelineStep::OrDefault { value } => {
+                match current {
+                    Value::Nothing => self.eval_expr(value, env),
+                    other => Ok(other),
+                }
+            }
+            PipelineStep::Expr(expr) => {
+                let mut child_env = Environment::with_parent(env.clone());
+                child_env.bind("_it".to_string(), current, false);
+                self.eval_expr(expr, &mut child_env)
+            }
+        }
+    }
+
+    /// Extract items from a Value::List, returning an error if it's not a list.
+    fn require_list(&self, value: &Value, step_name: &str) -> Result<Vec<Value>, RuntimeError> {
+        match value {
+            Value::List(items) => Ok(items.clone()),
+            _ => {
+                let mut err = self.error(&format!(
+                    "Pipeline step '{}' requires a List, but got {}",
+                    step_name,
+                    value.type_name()
+                ));
+                err.hint = Some(format!(
+                    "The '{}' step can only operate on a List value",
+                    step_name
+                ));
+                Err(err)
+            }
+        }
+    }
+
+    // --- Builtin functions ---
+
+    fn call_builtin(&mut self, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        match name {
+            "list" => Ok(Value::List(args)),
+            "db.insert" => self.builtin_db_insert(args),
+            "db.query" => self.builtin_db_query(args),
+            "time.now" => self.builtin_time_now(),
+            "rng.uuid" => self.builtin_rng_uuid(),
+            _ => Err(self.error(&format!("Unknown builtin '{}'", name))),
+        }
+    }
+
+    fn builtin_db_insert(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        if args.len() != 2 {
+            return Err(self.error("db.insert expects 2 arguments: table name and value"));
+        }
+        let table_name = match &args[0] {
+            Value::String(s) => s.clone(),
+            _ => return Err(self.error("db.insert first argument must be a String table name")),
+        };
+        let value = args[1].clone();
+        self.db_storage
+            .entry(table_name)
+            .or_insert_with(Vec::new)
+            .push(value.clone());
+        Ok(value)
+    }
+
+    fn builtin_db_query(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        if args.len() != 1 {
+            return Err(self.error("db.query expects 1 argument: table name"));
+        }
+        let table_name = match &args[0] {
+            Value::String(s) => s.clone(),
+            _ => return Err(self.error("db.query argument must be a String table name")),
+        };
+        let items = self.db_storage.get(&table_name).cloned().unwrap_or_default();
+        Ok(Value::List(items))
+    }
+
+    fn builtin_time_now(&self) -> Result<Value, RuntimeError> {
+        let time_str = self
+            .fixed_time
+            .clone()
+            .unwrap_or_else(|| "2026-04-02T12:00:00Z".to_string());
+        Ok(Value::String(time_str))
+    }
+
+    fn builtin_rng_uuid(&mut self) -> Result<Value, RuntimeError> {
+        self.rng_counter += 1;
+        let seed = self.rng_seed.unwrap_or(0);
+        Ok(Value::String(format!("uuid-{}-{}", seed, self.rng_counter)))
+    }
+
+    // --- Effect setup ---
+
+    pub fn setup_test_effects(&mut self) {
+        // db effect
+        let mut db_methods = HashMap::new();
+        db_methods.insert("insert".to_string(), Value::BuiltinFn { name: "db.insert".to_string() });
+        db_methods.insert("query".to_string(), Value::BuiltinFn { name: "db.query".to_string() });
+        self.global.bind("db".to_string(), Value::Effect { name: "db".to_string(), methods: db_methods }, false);
+
+        // time effect
+        let mut time_methods = HashMap::new();
+        time_methods.insert("now".to_string(), Value::BuiltinFn { name: "time.now".to_string() });
+        self.global.bind("time".to_string(), Value::Effect { name: "time".to_string(), methods: time_methods }, false);
+
+        // rng effect
+        let mut rng_methods = HashMap::new();
+        rng_methods.insert("uuid".to_string(), Value::BuiltinFn { name: "rng.uuid".to_string() });
+        self.global.bind("rng".to_string(), Value::Effect { name: "rng".to_string(), methods: rng_methods }, false);
+
+        // list builtin
+        self.global.bind("list".to_string(), Value::BuiltinFn { name: "list".to_string() }, false);
     }
 
     // --- If/else ---
@@ -937,5 +1276,193 @@ mod tests {
     fn eval_ensure_fail() {
         let err = eval_fails("ensure 1 < 0");
         assert!(err.message.contains("Ensure") || err.message.contains("ensure"));
+    }
+
+    // Task 7: Pipeline execution
+
+    fn eval_with_list(input: &str) -> Value {
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.global.bind("list".to_string(), Value::BuiltinFn { name: "list".to_string() }, false);
+        interp.interpret(&program).unwrap()
+    }
+
+    fn eval_with_effects(input: &str) -> Value {
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.setup_test_effects();
+        interp.fixed_time = Some("2026-04-02T12:00:00Z".to_string());
+        interp.rng_seed = Some(42);
+        interp.interpret(&program).unwrap()
+    }
+
+    #[test]
+    fn eval_pipeline_count() {
+        assert_eq!(eval_with_list("list(1, 2, 3) | count"), Value::Int(3));
+    }
+
+    #[test]
+    fn eval_pipeline_sum() {
+        assert_eq!(eval_with_list("list(1, 2, 3) | sum"), Value::Int(6));
+    }
+
+    #[test]
+    fn eval_pipeline_flatten() {
+        assert_eq!(
+            eval_with_list("list(list(1, 2), list(3, 4)) | flatten"),
+            Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)]),
+        );
+    }
+
+    #[test]
+    fn eval_pipeline_unique() {
+        assert_eq!(
+            eval_with_list("list(1, 2, 2, 3, 3) | unique"),
+            Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
+        );
+    }
+
+    #[test]
+    fn eval_pipeline_take_first() {
+        assert_eq!(
+            eval_with_list("list(1, 2, 3, 4, 5) | take first 3"),
+            Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
+        );
+    }
+
+    #[test]
+    fn eval_pipeline_take_last() {
+        assert_eq!(
+            eval_with_list("list(1, 2, 3, 4, 5) | take last 2"),
+            Value::List(vec![Value::Int(4), Value::Int(5)]),
+        );
+    }
+
+    #[test]
+    fn eval_pipeline_skip() {
+        assert_eq!(
+            eval_with_list("list(1, 2, 3, 4, 5) | skip 2"),
+            Value::List(vec![Value::Int(3), Value::Int(4), Value::Int(5)]),
+        );
+    }
+
+    #[test]
+    fn eval_pipeline_or_default() {
+        assert_eq!(eval_with_list("nothing | or default 42"), Value::Int(42));
+    }
+
+    #[test]
+    fn eval_pipeline_or_default_not_nothing() {
+        assert_eq!(eval_with_list("5 | or default 42"), Value::Int(5));
+    }
+
+    #[test]
+    fn eval_pipeline_multi_step() {
+        assert_eq!(
+            eval_with_list("list(1, 2, 3, 4, 5) | skip 2 | count"),
+            Value::Int(3),
+        );
+    }
+
+    #[test]
+    fn eval_pipeline_filter_nonlist_fails() {
+        let input = "42 | filter where true";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        let result = interp.interpret(&program);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("List"));
+    }
+
+    #[test]
+    fn eval_pipeline_sum_float() {
+        assert_eq!(
+            eval_with_list("list(1.5, 2.5) | sum"),
+            Value::Float(4.0),
+        );
+    }
+
+    #[test]
+    fn eval_pipeline_sum_empty() {
+        assert_eq!(
+            eval_with_list("list() | sum"),
+            Value::Int(0),
+        );
+    }
+
+    // Task 8: Builtin functions and effect stubs
+
+    #[test]
+    fn eval_list_builtin() {
+        assert_eq!(
+            eval_with_list("list(1, 2, 3)"),
+            Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
+        );
+    }
+
+    #[test]
+    fn eval_list_empty() {
+        assert_eq!(
+            eval_with_list("list()"),
+            Value::List(vec![]),
+        );
+    }
+
+    #[test]
+    fn eval_time_now() {
+        assert_eq!(
+            eval_with_effects("time.now()"),
+            Value::String("2026-04-02T12:00:00Z".to_string()),
+        );
+    }
+
+    #[test]
+    fn eval_rng_uuid() {
+        assert_eq!(
+            eval_with_effects("rng.uuid()"),
+            Value::String("uuid-42-1".to_string()),
+        );
+    }
+
+    #[test]
+    fn eval_rng_uuid_increments() {
+        // Two calls should produce different UUIDs
+        assert_eq!(
+            eval_with_effects("let a: String = rng.uuid()\nlet b: String = rng.uuid()\n\"{a},{b}\""),
+            Value::String("uuid-42-1,uuid-42-2".to_string()),
+        );
+    }
+
+    #[test]
+    fn eval_db_insert_and_query() {
+        assert_eq!(
+            eval_with_effects("db.insert(\"users\", User { name: \"Alice\" })\ndb.query(\"users\") | count"),
+            Value::Int(1),
+        );
+    }
+
+    #[test]
+    fn eval_db_query_empty() {
+        assert_eq!(
+            eval_with_effects("db.query(\"nonexistent\")"),
+            Value::List(vec![]),
+        );
+    }
+
+    #[test]
+    fn eval_db_insert_returns_value() {
+        assert_eq!(
+            eval_with_effects("let u: User = db.insert(\"users\", User { name: \"Bob\" })\nu.name"),
+            Value::String("Bob".to_string()),
+        );
     }
 }
