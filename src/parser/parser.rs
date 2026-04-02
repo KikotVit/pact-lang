@@ -18,8 +18,16 @@ impl Parser {
     }
 
     pub fn parse(&mut self) -> Result<Program, Vec<ParseError>> {
-        // Placeholder -- finalized in Task 14
-        Ok(Program { statements: vec![] })
+        self.skip_newlines();
+        let mut statements = Vec::new();
+        while !self.at_eof() {
+            match self.parse_statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(e) => return Err(vec![e]),
+            }
+            self.skip_newlines();
+        }
+        Ok(Program { statements })
     }
 
     // --- Token navigation ---
@@ -586,9 +594,54 @@ impl Parser {
     }
 
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
-        let expr = self.parse_expression()?;
+        let stmt = match self.current_kind() {
+            TokenKind::Let => self.parse_let_or_var(false)?,
+            TokenKind::Var => self.parse_let_or_var(true)?,
+            TokenKind::Return => self.parse_return()?,
+            TokenKind::Use => self.parse_use()?,
+            _ => {
+                let expr = self.parse_expression()?;
+                Statement::Expression(expr)
+            }
+        };
         self.skip_newlines();
-        Ok(Statement::Expression(expr))
+        Ok(stmt)
+    }
+
+    fn parse_let_or_var(&mut self, mutable: bool) -> Result<Statement, ParseError> {
+        self.advance(); // consume let/var
+        let name = self.expect_identifier()?;
+        self.expect(&TokenKind::Colon)?;
+        let type_ann = self.parse_type_expr()?;
+        self.expect(&TokenKind::Assign)?;
+        let value = self.parse_expression()?;
+        Ok(Statement::Let { name, mutable, type_ann, value })
+    }
+
+    fn parse_return(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // consume return
+        // If next is newline/eof/rbrace → return with no value
+        if self.at(&TokenKind::Newline) || self.at_eof() || self.at(&TokenKind::RBrace) {
+            return Ok(Statement::Return { value: None, condition: None });
+        }
+        let value = self.parse_expression()?;
+        // Check for trailing `if` condition
+        let condition = if self.eat(&TokenKind::If) {
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+        Ok(Statement::Return { value: Some(value), condition })
+    }
+
+    fn parse_use(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // consume use
+        let mut path = Vec::new();
+        path.push(self.expect_identifier()?);
+        while self.eat(&TokenKind::Dot) {
+            path.push(self.expect_identifier()?);
+        }
+        Ok(Statement::Use { path })
     }
 
     fn parse_string_expr(&mut self) -> Result<Expr, ParseError> {
@@ -1100,5 +1153,46 @@ mod tests {
         let mut parser = Parser::new(tokens, "Map<String, List<Int>>");
         let ty = parser.parse_type_expr().unwrap();
         assert!(matches!(ty, TypeExpr::Generic { ref name, ref args } if name == "Map" && args.len() == 2));
+    }
+
+    // --- Statement tests ---
+
+    #[test]
+    fn parse_let_statement() {
+        let prog = parse_program(r#"let name: String = "Vitalii""#);
+        assert_eq!(prog.statements.len(), 1);
+        assert!(matches!(&prog.statements[0], Statement::Let { mutable: false, .. }));
+    }
+
+    #[test]
+    fn parse_var_statement() {
+        let prog = parse_program("var counter: Int = 0");
+        assert!(matches!(&prog.statements[0], Statement::Let { mutable: true, .. }));
+    }
+
+    #[test]
+    fn parse_return_statement() {
+        let prog = parse_program("return 42");
+        assert!(matches!(&prog.statements[0], Statement::Return { value: Some(_), condition: None }));
+    }
+
+    #[test]
+    fn parse_return_if() {
+        let prog = parse_program("return NotFound if not user.active");
+        assert!(matches!(&prog.statements[0], Statement::Return { value: Some(_), condition: Some(_) }));
+    }
+
+    #[test]
+    fn parse_use_statement() {
+        let prog = parse_program("use models.user.User");
+        if let Statement::Use { path } = &prog.statements[0] {
+            assert_eq!(path, &["models", "user", "User"]);
+        } else { panic!("Expected Use"); }
+    }
+
+    #[test]
+    fn parse_ensure_as_expression_statement() {
+        let prog = parse_program("ensure amount > 0");
+        assert!(matches!(&prog.statements[0], Statement::Expression(Expr::Ensure(_))));
     }
 }
