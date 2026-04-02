@@ -368,7 +368,7 @@ impl Lexer {
         } else {
             match num_str.parse::<i64>() {
                 Ok(val) => Ok(Token { kind: TokenKind::IntLiteral(val), span }),
-                Err(e) => Err(self.error(length, &format!("Invalid integer literal '{}': {}", num_str, e), None)),
+                Err(_) => Err(self.error(length, &format!("Invalid integer literal '{}'", num_str), Some("Integer values must fit in 64-bit signed range"))),
             }
         }
     }
@@ -967,13 +967,25 @@ mod tests {
 
     #[test]
     fn number_followed_by_dot_field() {
-        // 42.foo should be IntLiteral(42), Dot, Identifier("foo")
-        // But identifier lexing isn't done yet, so just test 42. stops at the dot
         assert_eq!(
-            tokenize("42."),
+            tokenize("42.foo"),
             vec![
                 TokenKind::IntLiteral(42),
                 TokenKind::Dot,
+                TokenKind::Identifier("foo".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn number_followed_by_spread() {
+        assert_eq!(
+            tokenize("42...x"),
+            vec![
+                TokenKind::IntLiteral(42),
+                TokenKind::Spread,
+                TokenKind::Identifier("x".to_string()),
                 TokenKind::Eof,
             ]
         );
@@ -1036,13 +1048,15 @@ mod tests {
 
     #[test]
     fn all_23_keywords() {
+        // true/false are keywords but lexer emits BoolLiteral — tested in bool_literals_from_keywords
         assert_eq!(
-            tokenize("fn let var type if else match return use intent ensure needs route test app check nothing and or not as"),
+            tokenize("fn let var type if else match return use intent ensure needs route test app check true false nothing and or not as"),
             vec![
                 TokenKind::Fn, TokenKind::Let, TokenKind::Var, TokenKind::Type,
                 TokenKind::If, TokenKind::Else, TokenKind::Match, TokenKind::Return,
                 TokenKind::Use, TokenKind::Intent, TokenKind::Ensure, TokenKind::Needs,
                 TokenKind::Route, TokenKind::Test, TokenKind::App, TokenKind::Check,
+                TokenKind::BoolLiteral(true), TokenKind::BoolLiteral(false),
                 TokenKind::Nothing, TokenKind::And, TokenKind::Or, TokenKind::Not,
                 TokenKind::As,
                 TokenKind::Eof,
