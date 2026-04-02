@@ -341,6 +341,11 @@ impl Lexer {
             self.advance();
         }
 
+        // Check for raw string: raw"..."
+        if word == "raw" && !self.is_at_end() && self.current() == '"' {
+            return self.read_raw_string(start_line, start_col, start_pos);
+        }
+
         let length = self.pos - start_pos;
         let span = Span {
             line: start_line,
@@ -624,6 +629,39 @@ impl Lexer {
                     self.advance();
                 }
             }
+        }
+    }
+
+    fn read_raw_string(&mut self, start_line: usize, start_col: usize, start_offset: usize) -> Result<Token, LexerError> {
+        self.advance(); // consume opening "
+        let mut content = String::new();
+
+        loop {
+            if self.is_at_end() {
+                return Err(LexerError {
+                    line: start_line,
+                    column: start_col,
+                    length: 4, // raw"
+                    message: "Unterminated raw string literal".to_string(),
+                    hint: Some("Add a closing '\"' to end the raw string".to_string()),
+                    source_line: self.get_source_line(),
+                });
+            }
+            if self.current() == '"' {
+                self.advance();
+                let length = self.pos - start_offset;
+                return Ok(Token {
+                    kind: TokenKind::RawStringLiteral(content),
+                    span: Span {
+                        line: start_line,
+                        column: start_col,
+                        offset: start_offset,
+                        length,
+                    },
+                });
+            }
+            content.push(self.current());
+            self.advance();
         }
     }
 
@@ -1063,5 +1101,43 @@ mod tests {
         let result = lexer.tokenize();
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("Unterminated"));
+    }
+
+    // --- Raw string tests ---
+
+    #[test]
+    fn raw_string() {
+        assert_eq!(
+            tokenize(r#"raw"no {interpolation} here""#),
+            vec![
+                TokenKind::RawStringLiteral("no {interpolation} here".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_string_with_braces() {
+        assert_eq!(
+            tokenize(r#"raw"JSON: {key: value}""#),
+            vec![
+                TokenKind::RawStringLiteral("JSON: {key: value}".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_identifier_not_followed_by_quote() {
+        // "raw" without a quote is just an identifier
+        assert_eq!(
+            tokenize("raw + 1"),
+            vec![
+                TokenKind::Identifier("raw".to_string()),
+                TokenKind::Plus,
+                TokenKind::IntLiteral(1),
+                TokenKind::Eof,
+            ]
+        );
     }
 }
