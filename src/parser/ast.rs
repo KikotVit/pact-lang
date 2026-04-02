@@ -40,6 +40,13 @@ pub enum Statement {
         value: Expr,
     },
     Assert(Expr),
+    Route {
+        method: String,
+        path: String,
+        intent: String,
+        effects: Vec<String>,
+        body: Vec<Statement>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +100,7 @@ pub enum Expr {
     StructLiteral { name: Option<String>, fields: Vec<StructField> },
     Ensure(Box<Expr>),
     Is { expr: Box<Expr>, type_name: String },
+    Respond { status: Box<Expr>, body: Box<Expr> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -157,6 +165,9 @@ pub enum PipelineStep {
     Count,
     Sum,
     ExpectSuccess,
+    OnSuccess { body: Expr },
+    OnError { variant: String, body: Expr },
+    ValidateAs { type_name: String },
     Expr(Expr),
 }
 
