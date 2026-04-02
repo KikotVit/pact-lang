@@ -128,19 +128,58 @@ impl Parser {
     }
 
     fn parse_or(&mut self) -> Result<Expr, ParseError> {
-        self.parse_and()
+        let mut left = self.parse_and()?;
+        while self.at(&TokenKind::Or) {
+            self.advance();
+            let right = self.parse_and()?;
+            left = Expr::BinaryOp { left: Box::new(left), op: BinaryOp::Or, right: Box::new(right) };
+        }
+        Ok(left)
     }
 
     fn parse_and(&mut self) -> Result<Expr, ParseError> {
-        self.parse_not()
+        let mut left = self.parse_not()?;
+        while self.at(&TokenKind::And) {
+            self.advance();
+            let right = self.parse_not()?;
+            left = Expr::BinaryOp { left: Box::new(left), op: BinaryOp::And, right: Box::new(right) };
+        }
+        Ok(left)
     }
 
     fn parse_not(&mut self) -> Result<Expr, ParseError> {
+        if self.at(&TokenKind::Not) {
+            self.advance();
+            let operand = self.parse_not()?;
+            return Ok(Expr::UnaryOp { op: UnaryOp::Not, operand: Box::new(operand) });
+        }
         self.parse_comparison()
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
-        self.parse_addition()
+        let left = self.parse_addition()?;
+
+        // Check for `is` (contextual keyword)
+        if let TokenKind::Identifier(ref word) = self.current_kind().clone() {
+            if word == "is" {
+                self.advance();
+                let type_name = self.expect_identifier()?;
+                return Ok(Expr::Is { expr: Box::new(left), type_name });
+            }
+        }
+
+        let op = match self.current_kind() {
+            TokenKind::Eq => BinaryOp::Eq,
+            TokenKind::NotEq => BinaryOp::NotEq,
+            TokenKind::LAngle => BinaryOp::Lt,
+            TokenKind::RAngle => BinaryOp::Gt,
+            TokenKind::LessEq => BinaryOp::LtEq,
+            TokenKind::GreaterEq => BinaryOp::GtEq,
+            _ => return Ok(left),
+        };
+        self.advance();
+        let right = self.parse_addition()?;
+        Ok(Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) })
     }
 
     fn parse_addition(&mut self) -> Result<Expr, ParseError> {
@@ -479,5 +518,56 @@ mod tests {
         assert_eq!(parse_expr("a / b"), Expr::BinaryOp {
             left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::Div, right: Box::new(Expr::Identifier("b".to_string())),
         });
+    }
+
+    #[test]
+    fn parse_comparison_eq() {
+        assert_eq!(parse_expr("a == b"), Expr::BinaryOp {
+            left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::Eq, right: Box::new(Expr::Identifier("b".to_string())),
+        });
+    }
+
+    #[test]
+    fn parse_comparison_not_eq() {
+        assert_eq!(parse_expr("a != b"), Expr::BinaryOp {
+            left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::NotEq, right: Box::new(Expr::Identifier("b".to_string())),
+        });
+    }
+
+    #[test]
+    fn parse_less_than() {
+        assert_eq!(parse_expr("a < b"), Expr::BinaryOp {
+            left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::Lt, right: Box::new(Expr::Identifier("b".to_string())),
+        });
+    }
+
+    #[test]
+    fn parse_and_or() {
+        // a and b or c → Or(And(a, b), c)  (and binds tighter than or)
+        assert_eq!(parse_expr("a and b or c"), Expr::BinaryOp {
+            left: Box::new(Expr::BinaryOp {
+                left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::And, right: Box::new(Expr::Identifier("b".to_string())),
+            }),
+            op: BinaryOp::Or,
+            right: Box::new(Expr::Identifier("c".to_string())),
+        });
+    }
+
+    #[test]
+    fn parse_not() {
+        assert_eq!(parse_expr("not x"), Expr::UnaryOp { op: UnaryOp::Not, operand: Box::new(Expr::Identifier("x".to_string())) });
+    }
+
+    #[test]
+    fn parse_is_expr() {
+        assert_eq!(parse_expr("result is NotFound"), Expr::Is {
+            expr: Box::new(Expr::Identifier("result".to_string())), type_name: "NotFound".to_string(),
+        });
+    }
+
+    #[test]
+    fn parse_precedence_comparison_vs_arithmetic() {
+        // a + 1 == b → Eq(Add(a, 1), b)
+        assert!(matches!(parse_expr("a + 1 == b"), Expr::BinaryOp { op: BinaryOp::Eq, .. }));
     }
 }
