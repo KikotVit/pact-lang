@@ -122,12 +122,16 @@ eval_expr(expr, env) → Result<Value, RuntimeError>
 
 ```rust
 enum ControlFlow {
-    Return(Value),
-    Error(RuntimeError),
+    Return(Value),              // return from function (value can be Ok or Error — both are data)
+    RuntimeError(RuntimeError), // interpreter crash (type mismatch, missing field, etc.)
 }
 ```
 
-`eval_statement` for `return` emits `ControlFlow::Return(value)`. The function body loop catches it and returns the value. `?` on an `Error` value emits `ControlFlow::Return(Value::Error { ... })`.
+Critical distinction: `Value::Error` is **business logic** (NotFound, Forbidden) — data that flows through pipelines and is handled by code. `RuntimeError` is **interpreter failure** (type mismatch, missing field) — program is broken, print error and stop. Never mix them.
+
+`eval_statement` for `return NotFound if condition` emits `ControlFlow::Return(Value::Error { variant: "NotFound", ... })` — NOT `ControlFlow::RuntimeError`. NotFound is an expected result, not a crash.
+
+`?` on a `Value::Error` emits `ControlFlow::Return(Value::Error { ... })` to propagate up the call stack. The caller receives it as a `Value::Error` and can handle it.
 
 ## Error Handling
 
