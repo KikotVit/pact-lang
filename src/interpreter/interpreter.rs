@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::ast::{Expr, Program, Statement};
+use crate::parser::ast::{BinaryOp, Expr, Program, Statement, StringExpr, UnaryOp};
 use super::environment::Environment;
 use super::errors::RuntimeError;
 use super::value::Value;
@@ -110,20 +110,154 @@ impl Interpreter {
                     Err(self.error(&format!("Undefined variable '{}'", name)))
                 }
             }
-            Expr::StringLiteral(_) => {
-                Err(self.error("String literals are not yet implemented"))
-            }
+            Expr::StringLiteral(string_expr) => match string_expr {
+                StringExpr::Simple(s) => Ok(Value::String(s.clone())),
+                StringExpr::Interpolated(_) => {
+                    Err(self.error("String interpolation is not yet implemented"))
+                }
+            },
             Expr::FieldAccess { .. } => {
                 Err(self.error("Field access is not yet implemented"))
             }
             Expr::DotShorthand(_) => {
                 Err(self.error("Dot shorthand is not yet implemented"))
             }
-            Expr::BinaryOp { .. } => {
-                Err(self.error("Binary operations are not yet implemented"))
+            Expr::BinaryOp { left, op, right } => {
+                let left_val = self.eval_expr(left, env)?;
+                let right_val = self.eval_expr(right, env)?;
+                match op {
+                    BinaryOp::Add => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
+                        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+                        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
+                        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
+                        (Value::String(a), Value::String(b)) => {
+                            Ok(Value::String(format!("{}{}", a, b)))
+                        }
+                        _ => Err(self.error(&format!(
+                            "Cannot add {} and {}",
+                            left_val.type_name(),
+                            right_val.type_name()
+                        ))),
+                    },
+                    BinaryOp::Sub => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
+                        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
+                        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
+                        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
+                        _ => Err(self.error(&format!(
+                            "Cannot subtract {} from {}",
+                            right_val.type_name(),
+                            left_val.type_name()
+                        ))),
+                    },
+                    BinaryOp::Mul => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
+                        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
+                        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
+                        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
+                        _ => Err(self.error(&format!(
+                            "Cannot multiply {} and {}",
+                            left_val.type_name(),
+                            right_val.type_name()
+                        ))),
+                    },
+                    BinaryOp::Div => match (&left_val, &right_val) {
+                        (Value::Int(_), Value::Int(0)) => {
+                            Err(self.error("Division by zero"))
+                        }
+                        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
+                        (Value::Float(_), Value::Float(b)) if *b == 0.0 => {
+                            Err(self.error("Division by zero"))
+                        }
+                        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+                        (Value::Int(_), Value::Float(b)) if *b == 0.0 => {
+                            Err(self.error("Division by zero"))
+                        }
+                        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
+                        (Value::Float(_), Value::Int(0)) => {
+                            Err(self.error("Division by zero"))
+                        }
+                        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
+                        _ => Err(self.error(&format!(
+                            "Cannot divide {} by {}",
+                            left_val.type_name(),
+                            right_val.type_name()
+                        ))),
+                    },
+                    BinaryOp::Eq => Ok(Value::Bool(left_val == right_val)),
+                    BinaryOp::NotEq => Ok(Value::Bool(left_val != right_val)),
+                    BinaryOp::Lt => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
+                        (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
+                        (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) < *b)),
+                        (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a < *b as f64)),
+                        _ => Err(self.error(&format!(
+                            "Cannot compare {} and {}",
+                            left_val.type_name(),
+                            right_val.type_name()
+                        ))),
+                    },
+                    BinaryOp::Gt => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
+                        (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
+                        (Value::Int(a), Value::Float(b)) => Ok(Value::Bool(*a as f64 > *b)),
+                        (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a > *b as f64)),
+                        _ => Err(self.error(&format!(
+                            "Cannot compare {} and {}",
+                            left_val.type_name(),
+                            right_val.type_name()
+                        ))),
+                    },
+                    BinaryOp::LtEq => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
+                        (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
+                        (Value::Int(a), Value::Float(b)) => Ok(Value::Bool(*a as f64 <= *b)),
+                        (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a <= *b as f64)),
+                        _ => Err(self.error(&format!(
+                            "Cannot compare {} and {}",
+                            left_val.type_name(),
+                            right_val.type_name()
+                        ))),
+                    },
+                    BinaryOp::GtEq => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
+                        (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
+                        (Value::Int(a), Value::Float(b)) => Ok(Value::Bool(*a as f64 >= *b)),
+                        (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a >= *b as f64)),
+                        _ => Err(self.error(&format!(
+                            "Cannot compare {} and {}",
+                            left_val.type_name(),
+                            right_val.type_name()
+                        ))),
+                    },
+                    BinaryOp::And => {
+                        Ok(Value::Bool(left_val.is_truthy() && right_val.is_truthy()))
+                    }
+                    BinaryOp::Or => {
+                        Ok(Value::Bool(left_val.is_truthy() || right_val.is_truthy()))
+                    }
+                }
             }
-            Expr::UnaryOp { .. } => {
-                Err(self.error("Unary operations are not yet implemented"))
+            Expr::UnaryOp { op, operand } => {
+                let val = self.eval_expr(operand, env)?;
+                match op {
+                    UnaryOp::Neg => match val {
+                        Value::Int(n) => Ok(Value::Int(-n)),
+                        Value::Float(n) => Ok(Value::Float(-n)),
+                        _ => Err(self.error(&format!(
+                            "Cannot negate {} value",
+                            val.type_name()
+                        ))),
+                    },
+                    UnaryOp::Not => match val {
+                        Value::Bool(b) => Ok(Value::Bool(!b)),
+                        _ => Err(self.error(&format!(
+                            "Cannot apply 'not' to {} value",
+                            val.type_name()
+                        ))),
+                    },
+                }
             }
             Expr::ErrorPropagation(_) => {
                 Err(self.error("Error propagation is not yet implemented"))
@@ -149,8 +283,14 @@ impl Interpreter {
             Expr::Ensure(_) => {
                 Err(self.error("Ensure expressions are not yet implemented"))
             }
-            Expr::Is { .. } => {
-                Err(self.error("Is expressions are not yet implemented"))
+            Expr::Is { expr, type_name } => {
+                let val = self.eval_expr(expr, env)?;
+                let result = match &val {
+                    Value::Variant { variant, .. } if variant == type_name => true,
+                    Value::Error { variant, .. } if variant == type_name => true,
+                    _ => val.type_name() == type_name,
+                };
+                Ok(Value::Bool(result))
             }
         }
     }
@@ -229,4 +369,85 @@ mod tests {
         let err = eval_fails("x");
         assert!(err.message.contains("Undefined"));
     }
+
+    // Task 3: Binary/unary ops, comparison, is
+
+    #[test]
+    fn eval_addition() {
+        assert_eq!(eval("1 + 2"), Value::Int(3));
+    }
+
+    #[test]
+    fn eval_subtraction() {
+        assert_eq!(eval("10 - 3"), Value::Int(7));
+    }
+
+    #[test]
+    fn eval_multiplication() {
+        assert_eq!(eval("3 * 4"), Value::Int(12));
+    }
+
+    #[test]
+    fn eval_division() {
+        assert_eq!(eval("10 / 3"), Value::Int(3));
+    }
+
+    #[test]
+    fn eval_float_arithmetic() {
+        assert_eq!(eval("1.5 + 2.5"), Value::Float(4.0));
+    }
+
+    #[test]
+    fn eval_mixed_int_float() {
+        assert_eq!(eval("1 + 2.5"), Value::Float(3.5));
+    }
+
+    #[test]
+    fn eval_string_concat() {
+        assert_eq!(
+            eval(r#""hello" + " world""#),
+            Value::String("hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn eval_comparison_eq() {
+        assert_eq!(eval("1 == 1"), Value::Bool(true));
+    }
+
+    #[test]
+    fn eval_comparison_neq() {
+        assert_eq!(eval("1 != 2"), Value::Bool(true));
+    }
+
+    #[test]
+    fn eval_comparison_lt() {
+        assert_eq!(eval("1 < 2"), Value::Bool(true));
+    }
+
+    #[test]
+    fn eval_comparison_gt() {
+        assert_eq!(eval("2 > 1"), Value::Bool(true));
+    }
+
+    #[test]
+    fn eval_and_or() {
+        assert_eq!(eval("true and false or true"), Value::Bool(true));
+    }
+
+    #[test]
+    fn eval_not() {
+        assert_eq!(eval("not true"), Value::Bool(false));
+    }
+
+    #[test]
+    fn eval_negation() {
+        assert_eq!(eval("-5"), Value::Int(-5));
+    }
+
+    #[test]
+    fn eval_complex_arithmetic() {
+        assert_eq!(eval("(1 + 2) * 3 - 4"), Value::Int(5));
+    }
+
 }
