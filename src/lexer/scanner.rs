@@ -1267,4 +1267,72 @@ mod tests {
             ]
         );
     }
+
+    // --- Task 9: Multi-char operators verification tests ---
+
+    #[test]
+    fn spread_operator() {
+        assert_eq!(
+            tokenize("...user"),
+            vec![
+                TokenKind::Spread,
+                TokenKind::Identifier("user".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn dot_dot_produces_two_dots() {
+        assert_eq!(
+            tokenize("a..b"),
+            vec![
+                TokenKind::Identifier("a".to_string()),
+                TokenKind::Dot,
+                TokenKind::Dot,
+                TokenKind::Identifier("b".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn comment_at_end_of_file() {
+        assert_eq!(
+            tokenize("let x // trailing comment"),
+            vec![
+                TokenKind::Let,
+                TokenKind::Identifier("x".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn underscore_vs_identifier() {
+        assert_eq!(
+            tokenize("_ _foo _"),
+            vec![
+                TokenKind::Underscore,
+                TokenKind::Identifier("_foo".to_string()),
+                TokenKind::Underscore,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_delimiter_depth() {
+        assert_eq!(
+            tokenize("(\n{\n+\n}\n)"),
+            vec![
+                TokenKind::LParen,
+                TokenKind::LBrace,
+                TokenKind::Plus,
+                TokenKind::RBrace,
+                TokenKind::RParen,
+                TokenKind::Eof,
+            ]
+        );
+    }
 }
