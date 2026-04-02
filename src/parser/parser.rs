@@ -144,14 +144,41 @@ impl Parser {
     }
 
     fn parse_addition(&mut self) -> Result<Expr, ParseError> {
-        self.parse_multiplication()
+        let mut left = self.parse_multiplication()?;
+        loop {
+            let op = match self.current_kind() {
+                TokenKind::Plus => BinaryOp::Add,
+                TokenKind::Minus => BinaryOp::Sub,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_multiplication()?;
+            left = Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) };
+        }
+        Ok(left)
     }
 
     fn parse_multiplication(&mut self) -> Result<Expr, ParseError> {
-        self.parse_unary()
+        let mut left = self.parse_unary()?;
+        loop {
+            let op = match self.current_kind() {
+                TokenKind::Star => BinaryOp::Mul,
+                TokenKind::Slash => BinaryOp::Div,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_unary()?;
+            left = Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) };
+        }
+        Ok(left)
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParseError> {
+        if self.at(&TokenKind::Minus) {
+            self.advance();
+            let operand = self.parse_unary()?;
+            return Ok(Expr::UnaryOp { op: UnaryOp::Neg, operand: Box::new(operand) });
+        }
         self.parse_postfix()
     }
 
@@ -414,5 +441,43 @@ mod tests {
             assert_eq!(field, "name");
             assert!(matches!(*object, Expr::ErrorPropagation(_)));
         }
+    }
+
+    #[test]
+    fn parse_addition() {
+        assert_eq!(parse_expr("1 + 2"), Expr::BinaryOp {
+            left: Box::new(Expr::IntLiteral(1)), op: BinaryOp::Add, right: Box::new(Expr::IntLiteral(2)),
+        });
+    }
+
+    #[test]
+    fn parse_subtraction() {
+        assert_eq!(parse_expr("a - b"), Expr::BinaryOp {
+            left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::Sub, right: Box::new(Expr::Identifier("b".to_string())),
+        });
+    }
+
+    #[test]
+    fn parse_multiplication_precedence() {
+        // 1 + 2 * 3 → Add(1, Mul(2, 3))
+        assert_eq!(parse_expr("1 + 2 * 3"), Expr::BinaryOp {
+            left: Box::new(Expr::IntLiteral(1)),
+            op: BinaryOp::Add,
+            right: Box::new(Expr::BinaryOp {
+                left: Box::new(Expr::IntLiteral(2)), op: BinaryOp::Mul, right: Box::new(Expr::IntLiteral(3)),
+            }),
+        });
+    }
+
+    #[test]
+    fn parse_unary_negation() {
+        assert_eq!(parse_expr("-42"), Expr::UnaryOp { op: UnaryOp::Neg, operand: Box::new(Expr::IntLiteral(42)) });
+    }
+
+    #[test]
+    fn parse_division() {
+        assert_eq!(parse_expr("a / b"), Expr::BinaryOp {
+            left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::Div, right: Box::new(Expr::Identifier("b".to_string())),
+        });
     }
 }
