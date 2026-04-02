@@ -755,8 +755,62 @@ impl Parser {
     }
 
     fn parse_type_decl_stmt(&mut self) -> Result<Statement, ParseError> {
-        // Placeholder for Task 13
-        self.fail("Type declarations not yet implemented", None)
+        self.advance(); // consume `type`
+        let name = self.expect_identifier()?;
+
+        if self.at(&TokenKind::LBrace) {
+            // Struct: type Name { field: Type, ... }
+            self.advance(); // consume {
+            self.skip_newlines();
+            let mut fields = Vec::new();
+            while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                let field_name = self.expect_identifier()?;
+                self.expect(&TokenKind::Colon)?;
+                let type_ann = self.parse_type_expr()?;
+                fields.push(Field { name: field_name, type_ann });
+                self.eat(&TokenKind::Comma);
+                self.skip_newlines();
+            }
+            self.expect(&TokenKind::RBrace)?;
+            Ok(Statement::TypeDecl(TypeDecl::Struct { name, fields }))
+        } else if self.eat(&TokenKind::Assign) {
+            // Union: type Name = Variant1 | Variant2 { field: Type }
+            self.skip_newlines();
+            let mut variants = Vec::new();
+            variants.push(self.parse_union_variant()?);
+            while self.eat(&TokenKind::Pipe) {
+                self.skip_newlines();
+                variants.push(self.parse_union_variant()?);
+            }
+            Ok(Statement::TypeDecl(TypeDecl::Union { name, variants }))
+        } else {
+            self.fail(
+                &format!("Expected '{{' or '=' after type name, found {:?}", self.current_kind()),
+                None,
+            )
+        }
+    }
+
+    fn parse_union_variant(&mut self) -> Result<UnionVariant, ParseError> {
+        let name = self.expect_identifier()?;
+        let fields = if self.at(&TokenKind::LBrace) {
+            self.advance(); // consume {
+            self.skip_newlines();
+            let mut fs = Vec::new();
+            while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                let field_name = self.expect_identifier()?;
+                self.expect(&TokenKind::Colon)?;
+                let type_ann = self.parse_type_expr()?;
+                fs.push(Field { name: field_name, type_ann });
+                self.eat(&TokenKind::Comma);
+                self.skip_newlines();
+            }
+            self.expect(&TokenKind::RBrace)?;
+            Some(fs)
+        } else {
+            None
+        };
+        Ok(UnionVariant { name, fields })
     }
 
     fn parse_string_expr(&mut self) -> Result<Expr, ParseError> {
@@ -1356,5 +1410,36 @@ mod tests {
             assert_eq!(params.len(), 0);
             assert!(return_type.is_none());
         } else { panic!("Expected FnDecl"); }
+    }
+
+    // --- Type declaration tests ---
+
+    #[test]
+    fn parse_struct_type() {
+        let prog = parse_program("type User {\n  id: ID,\n  name: String,\n}");
+        if let Statement::TypeDecl(TypeDecl::Struct { name, fields }) = &prog.statements[0] {
+            assert_eq!(name, "User");
+            assert_eq!(fields.len(), 2);
+        } else { panic!("Expected Struct TypeDecl"); }
+    }
+
+    #[test]
+    fn parse_union_type() {
+        let prog = parse_program("type Role = Admin | Editor | Viewer");
+        if let Statement::TypeDecl(TypeDecl::Union { name, variants }) = &prog.statements[0] {
+            assert_eq!(name, "Role");
+            assert_eq!(variants.len(), 3);
+            assert!(variants[0].fields.is_none());
+        } else { panic!("Expected Union TypeDecl"); }
+    }
+
+    #[test]
+    fn parse_union_with_fields() {
+        let prog = parse_program("type ApiError = NotFound | BadRequest { message: String }");
+        if let Statement::TypeDecl(TypeDecl::Union { variants, .. }) = &prog.statements[0] {
+            assert_eq!(variants.len(), 2);
+            assert!(variants[0].fields.is_none());
+            assert!(variants[1].fields.is_some());
+        } else { panic!("Expected Union TypeDecl"); }
     }
 }
