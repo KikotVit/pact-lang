@@ -361,7 +361,270 @@ impl Lexer {
     }
 
     fn read_string(&mut self) -> Result<Token, LexerError> {
-        Err(self.error(1, "Not yet implemented", None))
+        // Current char is '"', consume it
+        let start_token = self.make_token(TokenKind::StringStart, 1);
+        self.advance(); // consume opening '"'
+
+        // Check for empty string "" or multiline string """
+        if !self.is_at_end() && self.current() == '"' {
+            // Could be "" (empty) or """ (multiline)
+            if self.peek() == Some('"') {
+                // It's """, multiline string
+                self.advance(); // consume second '"'
+                self.advance(); // consume third '"'
+                self.tokens.push(start_token);
+                return self.read_multiline_string();
+            } else {
+                // It's "" — empty string
+                let end_token = self.make_token(TokenKind::StringEnd, 1);
+                self.advance(); // consume closing '"'
+                self.tokens.push(start_token);
+                return Ok(end_token);
+            }
+        }
+
+        self.tokens.push(start_token);
+        self.read_string_content()
+    }
+
+    fn read_string_content(&mut self) -> Result<Token, LexerError> {
+        let mut fragment = String::new();
+
+        loop {
+            if self.is_at_end() {
+                return Err(self.error(1, "Unterminated string literal", None));
+            }
+
+            let ch = self.current();
+
+            match ch {
+                '"' => {
+                    // End of string
+                    if !fragment.is_empty() {
+                        let frag_token = self.make_token(
+                            TokenKind::StringFragment(fragment),
+                            0,
+                        );
+                        self.tokens.push(frag_token);
+                    }
+                    let end_token = self.make_token(TokenKind::StringEnd, 1);
+                    self.advance(); // consume closing '"'
+                    return Ok(end_token);
+                }
+                '{' => {
+                    if self.peek() == Some('{') {
+                        // Escaped brace: {{ -> literal {
+                        fragment.push('{');
+                        self.advance();
+                        self.advance();
+                    } else {
+                        // Interpolation start
+                        if !fragment.is_empty() {
+                            let frag_token = self.make_token(
+                                TokenKind::StringFragment(fragment),
+                                0,
+                            );
+                            self.tokens.push(frag_token);
+                        }
+                        let interp_start = self.make_token(TokenKind::InterpolationStart, 1);
+                        self.advance(); // consume '{'
+                        self.tokens.push(interp_start);
+                        self.read_interpolation()?;
+                        // Continue reading string content after interpolation
+                        return self.read_string_content();
+                    }
+                }
+                '}' => {
+                    if self.peek() == Some('}') {
+                        // Escaped brace: }} -> literal }
+                        fragment.push('}');
+                        self.advance();
+                        self.advance();
+                    } else {
+                        return Err(self.error(
+                            1,
+                            "Unexpected '}' in string literal",
+                            Some("Use '}}' to include a literal '}' in a string"),
+                        ));
+                    }
+                }
+                '\\' => {
+                    // Escape sequence
+                    self.advance(); // consume '\'
+                    if self.is_at_end() {
+                        return Err(self.error(1, "Unterminated string literal", None));
+                    }
+                    let escaped = self.current();
+                    match escaped {
+                        'n' => fragment.push('\n'),
+                        't' => fragment.push('\t'),
+                        'r' => fragment.push('\r'),
+                        '\\' => fragment.push('\\'),
+                        '"' => fragment.push('"'),
+                        _ => {
+                            return Err(self.error(
+                                1,
+                                &format!("Unknown escape sequence '\\{}'", escaped),
+                                Some("Valid escape sequences: \\n, \\t, \\r, \\\\, \\\""),
+                            ));
+                        }
+                    }
+                    self.advance();
+                }
+                '\n' => {
+                    // Regular strings cannot contain literal newlines
+                    return Err(self.error(1, "Unterminated string literal", Some("Use triple-quoted strings (\"\"\"...\"\"\") for multiline strings")));
+                }
+                _ => {
+                    fragment.push(ch);
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    fn read_interpolation(&mut self) -> Result<(), LexerError> {
+        let mut brace_depth = 0;
+
+        loop {
+            self.skip_whitespace_except_newline();
+
+            if self.is_at_end() {
+                return Err(self.error(1, "Unterminated interpolation", None));
+            }
+
+            if self.current() == '}' && brace_depth == 0 {
+                let interp_end = self.make_token(TokenKind::InterpolationEnd, 1);
+                self.advance(); // consume '}'
+                self.tokens.push(interp_end);
+                return Ok(());
+            }
+
+            let token = self.next_token()?;
+
+            match &token.kind {
+                TokenKind::LBrace => {
+                    brace_depth += 1;
+                    // Undo the delimiter_depth increment from next_token
+                    if self.delimiter_depth > 0 {
+                        self.delimiter_depth -= 1;
+                    }
+                    self.tokens.push(token);
+                }
+                TokenKind::RBrace => {
+                    // next_token already decremented delimiter_depth, undo that
+                    self.delimiter_depth += 1;
+                    brace_depth -= 1;
+                    self.tokens.push(token);
+                }
+                _ => {
+                    self.tokens.push(token);
+                }
+            }
+        }
+    }
+
+    fn read_multiline_string(&mut self) -> Result<Token, LexerError> {
+        let mut fragment = String::new();
+
+        loop {
+            if self.is_at_end() {
+                return Err(self.error(1, "Unterminated multiline string literal", None));
+            }
+
+            let ch = self.current();
+
+            match ch {
+                '"' => {
+                    // Check for closing """
+                    if self.peek() == Some('"') && self.peek_at(2) == Some('"') {
+                        // End of multiline string
+                        if !fragment.is_empty() {
+                            let frag_token = self.make_token(
+                                TokenKind::StringFragment(fragment),
+                                0,
+                            );
+                            self.tokens.push(frag_token);
+                        }
+                        let end_token = self.make_token(TokenKind::StringEnd, 3);
+                        self.advance(); // consume first '"'
+                        self.advance(); // consume second '"'
+                        self.advance(); // consume third '"'
+                        return Ok(end_token);
+                    } else {
+                        // Just a regular quote inside multiline string
+                        fragment.push('"');
+                        self.advance();
+                    }
+                }
+                '{' => {
+                    if self.peek() == Some('{') {
+                        // Escaped brace: {{ -> literal {
+                        fragment.push('{');
+                        self.advance();
+                        self.advance();
+                    } else {
+                        // Interpolation start
+                        if !fragment.is_empty() {
+                            let frag_token = self.make_token(
+                                TokenKind::StringFragment(fragment),
+                                0,
+                            );
+                            self.tokens.push(frag_token);
+                            fragment = String::new();
+                        }
+                        let interp_start = self.make_token(TokenKind::InterpolationStart, 1);
+                        self.advance(); // consume '{'
+                        self.tokens.push(interp_start);
+                        self.read_interpolation()?;
+                        // Continue reading multiline string content
+                        // (recursive call not ideal but reuse pattern from task spec)
+                        // Instead, just continue the loop
+                    }
+                }
+                '}' => {
+                    if self.peek() == Some('}') {
+                        // Escaped brace: }} -> literal }
+                        fragment.push('}');
+                        self.advance();
+                        self.advance();
+                    } else {
+                        return Err(self.error(
+                            1,
+                            "Unexpected '}' in string literal",
+                            Some("Use '}}' to include a literal '}' in a string"),
+                        ));
+                    }
+                }
+                '\\' => {
+                    // Escape sequence
+                    self.advance(); // consume '\'
+                    if self.is_at_end() {
+                        return Err(self.error(1, "Unterminated multiline string literal", None));
+                    }
+                    let escaped = self.current();
+                    match escaped {
+                        'n' => fragment.push('\n'),
+                        't' => fragment.push('\t'),
+                        'r' => fragment.push('\r'),
+                        '\\' => fragment.push('\\'),
+                        '"' => fragment.push('"'),
+                        _ => {
+                            return Err(self.error(
+                                1,
+                                &format!("Unknown escape sequence '\\{}'", escaped),
+                                Some("Valid escape sequences: \\n, \\t, \\r, \\\\, \\\""),
+                            ));
+                        }
+                    }
+                    self.advance();
+                }
+                _ => {
+                    fragment.push(ch);
+                    self.advance();
+                }
+            }
+        }
     }
 
     // --- Helper methods ---
@@ -671,5 +934,134 @@ mod tests {
                 TokenKind::Eof,
             ]
         );
+    }
+
+    // --- String literal tests ---
+
+    #[test]
+    fn simple_string() {
+        assert_eq!(
+            tokenize(r#""hello world""#),
+            vec![
+                TokenKind::StringStart,
+                TokenKind::StringFragment("hello world".to_string()),
+                TokenKind::StringEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(
+            tokenize(r#""""#),
+            vec![
+                TokenKind::StringStart,
+                TokenKind::StringEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn string_with_interpolation() {
+        assert_eq!(
+            tokenize(r#""hello {name}""#),
+            vec![
+                TokenKind::StringStart,
+                TokenKind::StringFragment("hello ".to_string()),
+                TokenKind::InterpolationStart,
+                TokenKind::Identifier("name".to_string()),
+                TokenKind::InterpolationEnd,
+                TokenKind::StringEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn string_with_dotted_interpolation() {
+        assert_eq!(
+            tokenize(r#""Hello {user.name}""#),
+            vec![
+                TokenKind::StringStart,
+                TokenKind::StringFragment("Hello ".to_string()),
+                TokenKind::InterpolationStart,
+                TokenKind::Identifier("user".to_string()),
+                TokenKind::Dot,
+                TokenKind::Identifier("name".to_string()),
+                TokenKind::InterpolationEnd,
+                TokenKind::StringEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn string_with_escaped_braces() {
+        assert_eq!(
+            tokenize(r#""JSON: {{key: value}}""#),
+            vec![
+                TokenKind::StringStart,
+                TokenKind::StringFragment("JSON: {key: value}".to_string()),
+                TokenKind::StringEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn string_with_escape_sequences() {
+        assert_eq!(
+            tokenize(r#""line1\nline2\ttab""#),
+            vec![
+                TokenKind::StringStart,
+                TokenKind::StringFragment("line1\nline2\ttab".to_string()),
+                TokenKind::StringEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn string_with_multiple_interpolations() {
+        assert_eq!(
+            tokenize(r#""Hello {name}, you have {count} items""#),
+            vec![
+                TokenKind::StringStart,
+                TokenKind::StringFragment("Hello ".to_string()),
+                TokenKind::InterpolationStart,
+                TokenKind::Identifier("name".to_string()),
+                TokenKind::InterpolationEnd,
+                TokenKind::StringFragment(", you have ".to_string()),
+                TokenKind::InterpolationStart,
+                TokenKind::Identifier("count".to_string()),
+                TokenKind::InterpolationEnd,
+                TokenKind::StringFragment(" items".to_string()),
+                TokenKind::StringEnd,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn multiline_string() {
+        let input = r#""""
+  Hello
+  World
+""""#;
+        let kinds = tokenize(input);
+        assert_eq!(kinds[0], TokenKind::StringStart);
+        assert!(matches!(&kinds[1], TokenKind::StringFragment(s) if s.contains("Hello")));
+        assert_eq!(kinds[kinds.len() - 2], TokenKind::StringEnd);
+        assert_eq!(kinds[kinds.len() - 1], TokenKind::Eof);
+    }
+
+    #[test]
+    fn unterminated_string_error() {
+        let mut lexer = Lexer::new(r#""hello"#);
+        let result = lexer.tokenize();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("Unterminated"));
     }
 }
