@@ -300,7 +300,7 @@ impl Parser {
                 self.parse_dot_shorthand()
             }
             TokenKind::StringStart | TokenKind::RawStringLiteral(_) => {
-                self.fail("Strings not yet implemented", None)
+                self.parse_string_expr()
             }
             TokenKind::If => {
                 self.fail("If not yet implemented", None)
@@ -317,6 +317,58 @@ impl Parser {
                 self.fail("Expected expression", None)
             }
         }
+    }
+
+    fn parse_string_expr(&mut self) -> Result<Expr, ParseError> {
+        match self.current_kind().clone() {
+            TokenKind::RawStringLiteral(content) => {
+                self.advance();
+                Ok(Expr::StringLiteral(StringExpr::Simple(content)))
+            }
+            TokenKind::StringStart => {
+                self.advance(); // consume StringStart
+
+                // Empty string: StringStart immediately followed by StringEnd
+                if self.at(&TokenKind::StringEnd) {
+                    self.advance();
+                    return Ok(Expr::StringLiteral(StringExpr::Simple(String::new())));
+                }
+
+                let parts = self.collect_string_parts()?;
+                self.expect(&TokenKind::StringEnd)?;
+
+                // If only one literal part and no interpolation, treat as simple
+                if parts.len() == 1 {
+                    if let StringPart::Literal(ref text) = parts[0] {
+                        return Ok(Expr::StringLiteral(StringExpr::Simple(text.clone())));
+                    }
+                }
+
+                Ok(Expr::StringLiteral(StringExpr::Interpolated(parts)))
+            }
+            _ => self.fail("Expected string", None),
+        }
+    }
+
+    fn collect_string_parts(&mut self) -> Result<Vec<StringPart>, ParseError> {
+        let mut parts = Vec::new();
+        loop {
+            match self.current_kind().clone() {
+                TokenKind::StringFragment(text) => {
+                    self.advance();
+                    parts.push(StringPart::Literal(text));
+                }
+                TokenKind::InterpolationStart => {
+                    self.advance(); // consume InterpolationStart
+                    let expr = self.parse_expression()?;
+                    self.expect(&TokenKind::InterpolationEnd)?;
+                    parts.push(StringPart::Expr(expr));
+                }
+                TokenKind::StringEnd => break,
+                _ => return self.fail("Unexpected token in string", None),
+            }
+        }
+        Ok(parts)
     }
 
     fn parse_dot_shorthand(&mut self) -> Result<Expr, ParseError> {
@@ -569,5 +621,31 @@ mod tests {
     fn parse_precedence_comparison_vs_arithmetic() {
         // a + 1 == b → Eq(Add(a, 1), b)
         assert!(matches!(parse_expr("a + 1 == b"), Expr::BinaryOp { op: BinaryOp::Eq, .. }));
+    }
+
+    #[test]
+    fn parse_simple_string() {
+        assert_eq!(parse_expr(r#""hello""#), Expr::StringLiteral(StringExpr::Simple("hello".to_string())));
+    }
+
+    #[test]
+    fn parse_interpolated_string() {
+        let expr = parse_expr(r#""hello {name}""#);
+        assert!(matches!(expr, Expr::StringLiteral(StringExpr::Interpolated(_))));
+        if let Expr::StringLiteral(StringExpr::Interpolated(parts)) = expr {
+            assert_eq!(parts.len(), 2);
+            assert_eq!(parts[0], StringPart::Literal("hello ".to_string()));
+            assert!(matches!(&parts[1], StringPart::Expr(Expr::Identifier(n)) if n == "name"));
+        }
+    }
+
+    #[test]
+    fn parse_raw_string() {
+        assert_eq!(parse_expr(r#"raw"no {interp}""#), Expr::StringLiteral(StringExpr::Simple("no {interp}".to_string())));
+    }
+
+    #[test]
+    fn parse_empty_string() {
+        assert_eq!(parse_expr(r#""""#), Expr::StringLiteral(StringExpr::Simple(String::new())));
     }
 }
