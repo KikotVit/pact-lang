@@ -156,7 +156,50 @@ impl Parser {
     }
 
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
-        self.parse_primary()
+        let mut expr = self.parse_primary()?;
+        loop {
+            match self.current_kind() {
+                TokenKind::Dot => {
+                    self.advance(); // consume '.'
+                    let field = self.expect_identifier()?;
+                    expr = Expr::FieldAccess {
+                        object: Box::new(expr),
+                        field,
+                    };
+                }
+                TokenKind::LParen => {
+                    self.advance(); // consume '('
+                    let args = self.parse_args_list()?;
+                    self.expect(&TokenKind::RParen)?;
+                    expr = Expr::FnCall {
+                        callee: Box::new(expr),
+                        args,
+                    };
+                }
+                TokenKind::Question => {
+                    self.advance(); // consume '?'
+                    expr = Expr::ErrorPropagation(Box::new(expr));
+                }
+                _ => break,
+            }
+        }
+        Ok(expr)
+    }
+
+    fn parse_args_list(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let mut args = Vec::new();
+        if self.at(&TokenKind::RParen) {
+            return Ok(args);
+        }
+        args.push(self.parse_expression()?);
+        while self.eat(&TokenKind::Comma) {
+            // Handle trailing comma
+            if self.at(&TokenKind::RParen) {
+                break;
+            }
+            args.push(self.parse_expression()?);
+        }
+        Ok(args)
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
@@ -291,5 +334,85 @@ mod tests {
             parse_expr(".values.length"),
             Expr::DotShorthand(vec!["values".to_string(), "length".to_string()]),
         );
+    }
+
+    #[test]
+    fn parse_field_access() {
+        assert_eq!(
+            parse_expr("user.name"),
+            Expr::FieldAccess {
+                object: Box::new(Expr::Identifier("user".to_string())),
+                field: "name".to_string(),
+            },
+        );
+    }
+
+    #[test]
+    fn parse_chained_field_access() {
+        assert_eq!(
+            parse_expr("user.address.city"),
+            Expr::FieldAccess {
+                object: Box::new(Expr::FieldAccess {
+                    object: Box::new(Expr::Identifier("user".to_string())),
+                    field: "address".to_string(),
+                }),
+                field: "city".to_string(),
+            },
+        );
+    }
+
+    #[test]
+    fn parse_fn_call_no_args() {
+        assert_eq!(
+            parse_expr("foo()"),
+            Expr::FnCall {
+                callee: Box::new(Expr::Identifier("foo".to_string())),
+                args: vec![],
+            },
+        );
+    }
+
+    #[test]
+    fn parse_fn_call_with_args() {
+        assert_eq!(
+            parse_expr("add(1, 2)"),
+            Expr::FnCall {
+                callee: Box::new(Expr::Identifier("add".to_string())),
+                args: vec![Expr::IntLiteral(1), Expr::IntLiteral(2)],
+            },
+        );
+    }
+
+    #[test]
+    fn parse_method_call() {
+        let expr = parse_expr("db.query(x)");
+        assert!(matches!(
+            expr,
+            Expr::FnCall { ref callee, ref args } if matches!(**callee, Expr::FieldAccess { .. }) && args.len() == 1
+        ));
+    }
+
+    #[test]
+    fn parse_error_propagation() {
+        assert_eq!(
+            parse_expr("foo()?"),
+            Expr::ErrorPropagation(Box::new(
+                Expr::FnCall {
+                    callee: Box::new(Expr::Identifier("foo".to_string())),
+                    args: vec![],
+                }
+            )),
+        );
+    }
+
+    #[test]
+    fn parse_postfix_chain() {
+        // find_user(id)?.name → FieldAccess { ErrorPropagation(FnCall), "name" }
+        let expr = parse_expr("find_user(id)?.name");
+        assert!(matches!(expr, Expr::FieldAccess { .. }));
+        if let Expr::FieldAccess { object, field } = expr {
+            assert_eq!(field, "name");
+            assert!(matches!(*object, Expr::ErrorPropagation(_)));
+        }
     }
 }
