@@ -544,6 +544,47 @@ impl Parser {
         Ok(stmts)
     }
 
+    // --- Type expression parsing ---
+
+    pub fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
+        let name = self.expect_identifier()?;
+
+        let base = if name == "Optional" && self.at(&TokenKind::LAngle) {
+            // Optional<T> → TypeExpr::Optional
+            self.advance(); // consume <
+            let inner = self.parse_type_expr()?;
+            self.expect(&TokenKind::RAngle)?;
+            TypeExpr::Optional(Box::new(inner))
+        } else if self.at(&TokenKind::LAngle) {
+            // Generic<A, B, ...>
+            self.advance(); // consume <
+            let mut args = Vec::new();
+            args.push(self.parse_type_expr()?);
+            while self.eat(&TokenKind::Comma) {
+                args.push(self.parse_type_expr()?);
+            }
+            self.expect(&TokenKind::RAngle)?;
+            TypeExpr::Generic { name, args }
+        } else {
+            TypeExpr::Named(name)
+        };
+
+        // Check for `or ErrorName` result type
+        if self.at(&TokenKind::Or) {
+            let mut errors = Vec::new();
+            while self.eat(&TokenKind::Or) {
+                let error_name = self.expect_identifier()?;
+                errors.push(error_name);
+            }
+            Ok(TypeExpr::Result {
+                ok: Box::new(base),
+                errors,
+            })
+        } else {
+            Ok(base)
+        }
+    }
+
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         let expr = self.parse_expression()?;
         self.skip_newlines();
@@ -1010,5 +1051,54 @@ mod tests {
         if let Expr::Match { arms, .. } = &expr {
             assert!(matches!(&arms[0].pattern, Pattern::Literal(Expr::IntLiteral(42))));
         } else { panic!("Expected Match"); }
+    }
+
+    // --- Type expression tests ---
+
+    #[test]
+    fn parse_simple_type() {
+        let mut lexer = Lexer::new("Int");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, "Int");
+        assert_eq!(parser.parse_type_expr().unwrap(), TypeExpr::Named("Int".to_string()));
+    }
+
+    #[test]
+    fn parse_generic_type() {
+        let mut lexer = Lexer::new("List<User>");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, "List<User>");
+        assert_eq!(parser.parse_type_expr().unwrap(), TypeExpr::Generic {
+            name: "List".to_string(),
+            args: vec![TypeExpr::Named("User".to_string())],
+        });
+    }
+
+    #[test]
+    fn parse_optional_type() {
+        let mut lexer = Lexer::new("Optional<String>");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, "Optional<String>");
+        assert_eq!(parser.parse_type_expr().unwrap(), TypeExpr::Optional(Box::new(TypeExpr::Named("String".to_string()))));
+    }
+
+    #[test]
+    fn parse_result_type() {
+        let mut lexer = Lexer::new("User or NotFound or DbError");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, "User or NotFound or DbError");
+        assert_eq!(parser.parse_type_expr().unwrap(), TypeExpr::Result {
+            ok: Box::new(TypeExpr::Named("User".to_string())),
+            errors: vec!["NotFound".to_string(), "DbError".to_string()],
+        });
+    }
+
+    #[test]
+    fn parse_nested_generic_type() {
+        let mut lexer = Lexer::new("Map<String, List<Int>>");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, "Map<String, List<Int>>");
+        let ty = parser.parse_type_expr().unwrap();
+        assert!(matches!(ty, TypeExpr::Generic { ref name, ref args } if name == "Map" && args.len() == 2));
     }
 }
