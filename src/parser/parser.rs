@@ -168,16 +168,38 @@ impl Parser {
 
     fn parse_pipeline(&mut self) -> Result<Expr, ParseError> {
         let source = self.parse_or()?;
-        if !self.at(&TokenKind::Pipe) {
+        // Check for pipe, including across newlines
+        if !self.at(&TokenKind::Pipe) && !self.is_pipe_after_newlines() {
             return Ok(source);
         }
         let mut steps = Vec::new();
-        while self.eat(&TokenKind::Pipe) {
+        loop {
+            // Skip newlines before checking for pipe continuation
+            if self.at(&TokenKind::Newline) && self.is_pipe_after_newlines() {
+                self.skip_newlines();
+            }
+            if !self.eat(&TokenKind::Pipe) {
+                break;
+            }
             self.skip_newlines();
             let step = self.parse_pipeline_step()?;
             steps.push(step);
         }
         Ok(Expr::Pipeline { source: Box::new(source), steps })
+    }
+
+    /// Check if there's a Pipe token after skipping newlines (lookahead without consuming).
+    fn is_pipe_after_newlines(&self) -> bool {
+        let mut offset = 0;
+        while *self.peek_at(offset) == TokenKind::Newline {
+            offset += 1;
+        }
+        // Check current + offset for newlines starting from current position
+        let mut pos = self.pos;
+        while pos < self.tokens.len() && self.tokens[pos].kind == TokenKind::Newline {
+            pos += 1;
+        }
+        pos < self.tokens.len() && self.tokens[pos].kind == TokenKind::Pipe
     }
 
     fn parse_pipeline_step(&mut self) -> Result<PipelineStep, ParseError> {
@@ -290,6 +312,25 @@ impl Parser {
                 "sum" => {
                     self.advance();
                     Ok(PipelineStep::Sum)
+                }
+                "on" => {
+                    self.advance();
+                    if self.eat_contextual("success") {
+                        self.expect(&TokenKind::Colon)?;
+                        let body = self.parse_or()?;
+                        return Ok(PipelineStep::OnSuccess { body });
+                    } else {
+                        let variant = self.expect_identifier()?;
+                        self.expect(&TokenKind::Colon)?;
+                        let body = self.parse_or()?;
+                        return Ok(PipelineStep::OnError { variant, body });
+                    }
+                }
+                "validate" => {
+                    self.advance();
+                    self.expect(&TokenKind::As)?;
+                    let type_name = self.expect_identifier()?;
+                    return Ok(PipelineStep::ValidateAs { type_name });
                 }
                 _ => {
                     let expr = self.parse_or()?;
@@ -481,6 +522,13 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Nothing)
             }
+            TokenKind::Identifier(ref name) if name == "respond" => {
+                self.advance();
+                let status = self.parse_or()?;
+                self.expect_contextual("with")?;
+                let body = self.parse_or()?;
+                Ok(Expr::Respond { status: Box::new(status), body: Box::new(body) })
+            }
             TokenKind::Identifier(name) => {
                 self.advance();
                 // Struct literal: PascalCase followed by {
@@ -666,6 +714,7 @@ impl Parser {
                 self.skip_newlines();
                 self.parse_fn_decl(Some(intent))?
             }
+            TokenKind::Route => self.parse_route()?,
             TokenKind::Type => self.parse_type_decl_stmt()?,
             TokenKind::Test => self.parse_test_block()?,
             TokenKind::Identifier(word) if word == "using" => {
@@ -1002,15 +1051,104 @@ impl Parser {
         Ok(parts)
     }
 
+    fn parse_route_path(&mut self) -> Result<String, ParseError> {
+        match self.current_kind().clone() {
+            TokenKind::RawStringLiteral(content) => {
+                self.advance();
+                Ok(content)
+            }
+            TokenKind::StringStart => {
+                self.advance(); // consume StringStart
+                let mut path = String::new();
+                loop {
+                    match self.current_kind().clone() {
+                        TokenKind::StringFragment(text) => {
+                            self.advance();
+                            path.push_str(&text);
+                        }
+                        TokenKind::InterpolationStart => {
+                            self.advance(); // consume ${
+                            // Collect the identifier as a path parameter template
+                            let param = self.expect_identifier()?;
+                            path.push('{');
+                            path.push_str(&param);
+                            path.push('}');
+                            self.expect(&TokenKind::InterpolationEnd)?;
+                        }
+                        TokenKind::StringEnd => {
+                            self.advance();
+                            break;
+                        }
+                        _ => return self.fail(
+                            &format!("Unexpected token in route path: {:?}", self.current_kind()),
+                            None,
+                        ),
+                    }
+                }
+                Ok(path)
+            }
+            _ => self.fail(
+                &format!("Expected string for route path, found {:?}", self.current_kind()),
+                None,
+            ),
+        }
+    }
+
+    fn parse_route(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // consume `route`
+        let method = self.expect_identifier()?;
+        let path = self.parse_route_path()?;
+        self.push_block("route");
+        self.expect(&TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        // REQUIRED: intent
+        if !self.at(&TokenKind::Intent) {
+            return Err(self.error(
+                "Missing 'intent' block in route declaration",
+                Some("every route requires intent \"description\" as the first line"),
+            ));
+        }
+        self.advance(); // consume `intent`
+        let intent = self.parse_intent_string()?;
+        self.skip_newlines();
+
+        // Optional: needs
+        let mut effects = Vec::new();
+        if self.eat(&TokenKind::Needs) {
+            if !self.at(&TokenKind::LBrace) && !self.at(&TokenKind::Newline) {
+                effects.push(self.expect_identifier()?);
+                while self.eat(&TokenKind::Comma) {
+                    if self.at(&TokenKind::LBrace) || self.at(&TokenKind::Newline) {
+                        break;
+                    }
+                    effects.push(self.expect_identifier()?);
+                }
+            }
+        }
+        self.skip_newlines();
+
+        // Body
+        let body = self.parse_block_body()?;
+        self.expect_closing_brace()?;
+
+        Ok(Statement::Route { method, path, intent, effects, body })
+    }
+
     fn parse_dot_shorthand(&mut self) -> Result<Expr, ParseError> {
         self.expect(&TokenKind::Dot)?; // consume initial '.'
-        let first = self.expect_identifier()?;
-        let mut parts = vec![first];
-        while self.eat(&TokenKind::Dot) {
-            let name = self.expect_identifier()?;
-            parts.push(name);
+        // Bare `.` (not followed by identifier) means "the current value" (_it)
+        if let TokenKind::Identifier(_) = self.current_kind() {
+            let first = self.expect_identifier()?;
+            let mut parts = vec![first];
+            while self.eat(&TokenKind::Dot) {
+                let name = self.expect_identifier()?;
+                parts.push(name);
+            }
+            Ok(Expr::DotShorthand(parts))
+        } else {
+            Ok(Expr::DotShorthand(vec![]))
         }
-        Ok(Expr::DotShorthand(parts))
     }
 }
 
@@ -1860,5 +1998,76 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
         } else {
             panic!("Expected TestBlock");
         }
+    }
+
+    #[test]
+    fn parse_simple_route() {
+        let input = "route GET \"/health\" {\n  intent \"health check\"\n  respond 200 with nothing\n}";
+        let prog = parse_program(input);
+        assert!(matches!(&prog.statements[0], Statement::Route { method, .. } if method == "GET"));
+    }
+
+    #[test]
+    fn parse_route_with_needs() {
+        let input = "route GET \"/users\" {\n  intent \"list users\"\n  needs db, auth\n  respond 200 with nothing\n}";
+        let prog = parse_program(input);
+        if let Statement::Route { effects, .. } = &prog.statements[0] {
+            assert_eq!(effects, &["db", "auth"]);
+        } else { panic!("Expected Route"); }
+    }
+
+    #[test]
+    fn parse_route_without_intent_fails() {
+        let input = "route GET \"/health\" {\n  respond 200 with nothing\n}";
+        let mut lexer = crate::lexer::Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let err = parser.parse().unwrap_err();
+        assert!(err[0].message.contains("intent"));
+    }
+
+    #[test]
+    fn parse_respond_expression() {
+        let expr = parse_expr("respond 200 with nothing");
+        assert!(matches!(expr, Expr::Respond { .. }));
+    }
+
+    #[test]
+    fn parse_on_success_pipeline() {
+        let expr = parse_expr("x | on success: respond 200 with .");
+        if let Expr::Pipeline { steps, .. } = &expr {
+            assert!(matches!(&steps[0], PipelineStep::OnSuccess { .. }));
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_on_error_pipeline() {
+        let expr = parse_expr("x | on NotFound: respond 404 with nothing");
+        if let Expr::Pipeline { steps, .. } = &expr {
+            assert!(matches!(&steps[0], PipelineStep::OnError { variant, .. } if variant == "NotFound"));
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_validate_as_pipeline() {
+        let expr = parse_expr("x | validate as NewUser");
+        if let Expr::Pipeline { steps, .. } = &expr {
+            assert!(matches!(&steps[0], PipelineStep::ValidateAs { type_name } if type_name == "NewUser"));
+        } else { panic!("Expected Pipeline"); }
+    }
+
+    #[test]
+    fn parse_route_with_pipeline() {
+        let input = r#"route GET "/users/{id}" {
+  intent "get user by ID"
+  needs db
+  find_user(request.params.id)
+    | on success: respond 200 with .
+    | on NotFound: respond 404 with { error: "not found" }
+}"#;
+        let prog = parse_program(input);
+        if let Statement::Route { body, .. } = &prog.statements[0] {
+            assert!(!body.is_empty());
+        } else { panic!("Expected Route"); }
     }
 }
