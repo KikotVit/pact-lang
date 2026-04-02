@@ -1583,7 +1583,7 @@ mod tests {
 
     #[test]
     fn real_pact_effect_markers() {
-        let input = "fn save(user: User) -> User needs { db } {\n  db.insert(user)\n}";
+        let input = "fn save(user: User) -> User needs db {\n  db.insert(user)\n}";
         let kinds = tokenize(input);
         assert_eq!(
             kinds,
@@ -1598,9 +1598,7 @@ mod tests {
                 TokenKind::Arrow,
                 TokenKind::Identifier("User".to_string()),
                 TokenKind::Needs,
-                TokenKind::LBrace,
                 TokenKind::Identifier("db".to_string()),
-                TokenKind::RBrace,
                 TokenKind::LBrace,
                 TokenKind::Identifier("db".to_string()),
                 TokenKind::Dot,

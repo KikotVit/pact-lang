@@ -108,7 +108,7 @@ fn withdraw(account: Account, amount: Money) -> Account or InsufficientFunds {
 ### Effect markers
 
 ```pact
-fn create_user(data: NewUser) -> User needs { db, time, rng } {
+fn create_user(data: NewUser) -> User needs db, time, rng {
   let now: DateTime = time.now()
   let id: ID = rng.uuid()
 
@@ -161,7 +161,7 @@ fn active_admins(users: List<User>) -> List<String> {
 ### Pipeline з кількома кроками
 
 ```pact
-fn order_summary(user_id: ID) -> Summary or NotFound needs { db } {
+fn order_summary(user_id: ID) -> Summary or NotFound needs db {
   db.query("orders", where .user_id == user_id)
     | expect any or raise NotFound
     | group by .status
@@ -219,7 +219,7 @@ type ApiError = NotFound | Forbidden | BadRequest { message: String }
 ### Повернення
 
 ```pact
-fn find_user(id: ID) -> User or NotFound needs { db } {
+fn find_user(id: ID) -> User or NotFound needs db {
   db.query("users", where .id == id)
     | find first where .id == id
     | expect one or raise NotFound
@@ -239,7 +239,7 @@ find_user(request.params.id)
 
 ```pact
 // ? прокидає помилку вгору, як в Rust
-fn get_user_orders(user_id: ID) -> List<Order> or NotFound or DbError needs { db } {
+fn get_user_orders(user_id: ID) -> List<Order> or NotFound or DbError needs db {
   let user: User = find_user(user_id)?
   db.query("orders", where .user_id == user.id)?
 }
@@ -284,19 +284,19 @@ use handlers.users.create_user
 ### Effect markers
 
 ```pact
-fn now() -> DateTime needs { time } {
+fn now() -> DateTime needs time {
   time.now()
 }
 
-fn generate_id() -> ID needs { rng } {
+fn generate_id() -> ID needs rng {
   rng.uuid()
 }
 
-fn save(user: User) -> User needs { db } {
+fn save(user: User) -> User needs db {
   db.insert("users", user)
 }
 
-fn send_email(to: String, body: String) -> Bool needs { email } {
+fn send_email(to: String, body: String) -> Bool needs email {
   email.send(to, body)
 }
 ```
@@ -330,7 +330,7 @@ test "create user sets correct timestamp" {
 ```pact
 route GET "/users" {
   intent "отримати список активних користувачів"
-  needs { db, auth }
+  needs db, auth
 
   let caller: User = auth.require(request)?
   return Forbidden if caller.role == Viewer
@@ -344,7 +344,7 @@ route GET "/users" {
 
 route GET "/users/{id}" {
   intent "отримати користувача за ID"
-  needs { db }
+  needs db
 
   find_user(request.params.id)
     | on success: respond 200 with .
@@ -353,7 +353,7 @@ route GET "/users/{id}" {
 
 route POST "/users" {
   intent "створити нового користувача"
-  needs { db, time, rng, auth }
+  needs db, time, rng, auth
 
   let caller: User = auth.require(request)?
   return Forbidden if caller.role != Admin
@@ -367,7 +367,7 @@ route POST "/users" {
 
 route PUT "/users/{id}" {
   intent "оновити дані користувача"
-  needs { db, auth, time }
+  needs db, auth, time
 
   let caller: User = auth.require(request)?
   let target: User = find_user(request.params.id)?
@@ -387,7 +387,7 @@ route PUT "/users/{id}" {
 
 route DELETE "/users/{id}" {
   intent "деактивувати користувача"
-  needs { db, auth, time }
+  needs db, auth, time
 
   let caller: User = auth.require(request)?
   return Forbidden if caller.role != Admin
@@ -428,7 +428,7 @@ PACT не має middleware. Middleware — implicit: ти дивишся на r
 
 ```pact
 // shared pipeline — звичайна функція, нічого магічного
-fn api_pipeline(request: Request) -> { caller: User } or Unauthorized needs { auth, log, time } {
+fn api_pipeline(request: Request) -> { caller: User } or Unauthorized needs auth, log, time {
   let start: DateTime = time.now()
   log.info("{request.method} {request.path}")
 
@@ -440,7 +440,7 @@ fn api_pipeline(request: Request) -> { caller: User } or Unauthorized needs { au
 // route з auth — явно викликає api_pipeline
 route GET "/users" {
   intent "список користувачів"
-  needs { db, auth, log, time }
+  needs db, auth, log, time
 
   let ctx = request | api_pipeline?
 
@@ -452,7 +452,7 @@ route GET "/users" {
 // route без auth — видно одразу, бо api_pipeline відсутній
 route GET "/health" {
   intent "health check"
-  needs { }
+  
 
   respond 200 with { status: "ok" }
 }

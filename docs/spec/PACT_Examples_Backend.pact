@@ -56,20 +56,20 @@ use models.user.UserSummary
 use errors.AppError
 
 intent "знайти користувача за ID"
-fn find_user(id: ID) -> User or NotFound needs { db } {
+fn find_user(id: ID) -> User or NotFound needs db {
   db.query("users", where .id == id)
     | find first where .id == id
     | expect one or raise NotFound { resource: "User" }
 }
 
 intent "знайти користувача за email"
-fn find_by_email(email: String) -> Optional<User> needs { db } {
+fn find_by_email(email: String) -> Optional<User> needs db {
   db.query("users", where .email == email)
     | find first where .email == email
 }
 
 intent "створити нового користувача з дефолтною роллю Viewer"
-fn create_user(data: NewUser) -> User or BadRequest needs { db, time, rng } {
+fn create_user(data: NewUser) -> User or BadRequest needs db, time, rng {
   let existing: Optional<User> = find_by_email(data.email)
   return BadRequest { message: "Email already taken" } if existing != nothing
 
@@ -88,7 +88,7 @@ fn create_user(data: NewUser) -> User or BadRequest needs { db, time, rng } {
 }
 
 intent "оновити дані існуючого користувача"
-fn update_user(id: ID, updates: UserUpdate) -> User or NotFound or DbError needs { db, time } {
+fn update_user(id: ID, updates: UserUpdate) -> User or NotFound or DbError needs db, time {
   let user: User = find_user(id)?
 
   let updated: User = User {
@@ -103,7 +103,7 @@ fn update_user(id: ID, updates: UserUpdate) -> User or NotFound or DbError needs
 }
 
 intent "деактивувати користувача замість видалення"
-fn deactivate_user(id: ID) -> User or NotFound needs { db, time } {
+fn deactivate_user(id: ID) -> User or NotFound needs db, time {
   let user: User = find_user(id)?
 
   db.update("users", where .id == id, with {
@@ -114,7 +114,7 @@ fn deactivate_user(id: ID) -> User or NotFound needs { db, time } {
 }
 
 intent "отримати статистику по користувачах"
-fn user_summary() -> UserSummary needs { db } {
+fn user_summary() -> UserSummary needs db {
   let users: List<User> = db.query("users")
 
   UserSummary {
@@ -136,7 +136,7 @@ use services.user_service.*
 use models.user.*
 
 // shared pipeline замість middleware — явний, видимий, тестуємий
-fn api_pipeline(request: Request) -> { caller: User } or Unauthorized needs { auth, log, time } {
+fn api_pipeline(request: Request) -> { caller: User } or Unauthorized needs auth, log, time {
   log.info("{request.method} {request.path}")
   let caller: User = auth.require(request)?
   { caller }
@@ -144,7 +144,7 @@ fn api_pipeline(request: Request) -> { caller: User } or Unauthorized needs { au
 
 route GET "/users" {
   intent "список активних користувачів з пагінацією"
-  needs { db, auth, log, time }
+  needs db, auth, log, time
 
   let ctx = request | api_pipeline?
   let page: Int = request.query.page | or default 1
@@ -160,7 +160,7 @@ route GET "/users" {
 
 route GET "/users/summary" {
   intent "статистика по всіх користувачах"
-  needs { db, auth, log, time }
+  needs db, auth, log, time
 
   let ctx = request | api_pipeline?
   return Forbidden { reason: "Admin only" } if ctx.caller.role != Admin
@@ -172,7 +172,7 @@ route GET "/users/summary" {
 
 route GET "/users/{id}" {
   intent "отримати одного користувача — публічний, без auth"
-  needs { db }
+  needs db
 
   find_user(request.params.id)
     | on success: respond 200 with .
@@ -181,7 +181,7 @@ route GET "/users/{id}" {
 
 route POST "/users" {
   intent "створити користувача"
-  needs { db, time, rng, auth, log }
+  needs db, time, rng, auth, log
 
   let ctx = request | api_pipeline?
   return Forbidden { reason: "Admin only" } if ctx.caller.role != Admin
@@ -195,7 +195,7 @@ route POST "/users" {
 
 route PUT "/users/{id}" {
   intent "оновити користувача"
-  needs { db, auth, log, time }
+  needs db, auth, log, time
 
   let ctx = request | api_pipeline?
   let target_id: ID = request.params.id
@@ -212,7 +212,7 @@ route PUT "/users/{id}" {
 
 route DELETE "/users/{id}" {
   intent "деактивувати користувача (soft delete)"
-  needs { db, auth, log, time }
+  needs db, auth, log, time
 
   let ctx = request | api_pipeline?
   return Forbidden { reason: "Admin only" } if ctx.caller.role != Admin

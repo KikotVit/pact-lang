@@ -2,10 +2,16 @@ use crate::lexer::{Token, TokenKind, Lexer};
 use crate::parser::ast::*;
 use crate::parser::errors::ParseError;
 
+struct BlockContext {
+    kind: &'static str,
+    line: usize,
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     source: String,
+    block_stack: Vec<BlockContext>,
 }
 
 impl Parser {
@@ -14,6 +20,7 @@ impl Parser {
             tokens,
             pos: 0,
             source: source.to_string(),
+            block_stack: Vec::new(),
         }
     }
 
@@ -132,6 +139,25 @@ impl Parser {
 
     fn fail<T>(&self, message: &str, hint: Option<&str>) -> Result<T, ParseError> {
         Err(self.error(message, hint))
+    }
+
+    fn push_block(&mut self, kind: &'static str) {
+        self.block_stack.push(BlockContext { kind, line: self.current().span.line });
+    }
+
+    fn expect_closing_brace(&mut self) -> Result<(), ParseError> {
+        if self.eat(&TokenKind::RBrace) {
+            self.block_stack.pop();
+            Ok(())
+        } else {
+            let context = self.block_stack.last();
+            let msg = if let Some(ctx) = context {
+                format!("Expected '}}' to close '{}' block started at line {}, found {:?}", ctx.kind, ctx.line, self.current_kind())
+            } else {
+                format!("Expected '}}', found {:?}", self.current_kind())
+            };
+            Err(self.error(&msg, None))
+        }
     }
 
     // --- Expression parsing ---
@@ -465,9 +491,10 @@ impl Parser {
                 if self.is_struct_literal_start() {
                     self.parse_struct_literal(None)
                 } else {
+                    self.push_block("block");
                     self.advance(); // consume {
                     let body = self.parse_block_body()?;
-                    self.expect(&TokenKind::RBrace)?;
+                    self.expect_closing_brace()?;
                     Ok(Expr::Block(body))
                 }
             }
@@ -503,13 +530,15 @@ impl Parser {
     fn parse_if_expr(&mut self) -> Result<Expr, ParseError> {
         self.advance(); // consume `if`
         let condition = self.parse_expression()?;
+        self.push_block("if");
         self.expect(&TokenKind::LBrace)?;
         let then_body = self.parse_block_body()?;
-        self.expect(&TokenKind::RBrace)?;
+        self.expect_closing_brace()?;
         let else_body = if self.eat(&TokenKind::Else) {
+            self.push_block("else");
             self.expect(&TokenKind::LBrace)?;
             let body = self.parse_block_body()?;
-            self.expect(&TokenKind::RBrace)?;
+            self.expect_closing_brace()?;
             Some(body)
         } else {
             None
@@ -520,6 +549,7 @@ impl Parser {
     fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
         self.advance(); // consume `match`
         let subject = self.parse_expression()?;
+        self.push_block("match");
         self.expect(&TokenKind::LBrace)?;
         self.skip_newlines();
         let mut arms = Vec::new();
@@ -531,7 +561,7 @@ impl Parser {
             self.eat(&TokenKind::Comma);
             self.skip_newlines();
         }
-        self.expect(&TokenKind::RBrace)?;
+        self.expect_closing_brace()?;
         Ok(Expr::Match { subject: Box::new(subject), arms })
     }
 
@@ -701,24 +731,24 @@ impl Parser {
             }
         }
 
-        // Optional needs { effect1, effect2 }
+        // Optional needs effect1, effect2
         let mut effects = Vec::new();
         if self.eat(&TokenKind::Needs) {
-            self.expect(&TokenKind::LBrace)?;
-            if !self.at(&TokenKind::RBrace) {
+            // Parse comma-separated identifiers until we hit `{` (start of function body)
+            if !self.at(&TokenKind::LBrace) {
                 effects.push(self.expect_identifier()?);
                 while self.eat(&TokenKind::Comma) {
-                    if self.at(&TokenKind::RBrace) { break; }
+                    if self.at(&TokenKind::LBrace) { break; }
                     effects.push(self.expect_identifier()?);
                 }
             }
-            self.expect(&TokenKind::RBrace)?;
         }
 
         // Body
+        self.push_block("function");
         self.expect(&TokenKind::LBrace)?;
         let body = self.parse_block_body()?;
-        self.expect(&TokenKind::RBrace)?;
+        self.expect_closing_brace()?;
 
         Ok(Statement::FnDecl {
             name,
@@ -784,6 +814,7 @@ impl Parser {
 
         if self.at(&TokenKind::LBrace) {
             // Struct: type Name { field: Type, ... }
+            self.push_block("type");
             self.advance(); // consume {
             self.skip_newlines();
             let mut fields = Vec::new();
@@ -795,7 +826,7 @@ impl Parser {
                 self.eat(&TokenKind::Comma);
                 self.skip_newlines();
             }
-            self.expect(&TokenKind::RBrace)?;
+            self.expect_closing_brace()?;
             Ok(Statement::TypeDecl(TypeDecl::Struct { name, fields }))
         } else if self.eat(&TokenKind::Assign) {
             // Union: type Name = Variant1 | Variant2 { field: Type }
@@ -818,6 +849,7 @@ impl Parser {
     fn parse_union_variant(&mut self) -> Result<UnionVariant, ParseError> {
         let name = self.expect_identifier()?;
         let fields = if self.at(&TokenKind::LBrace) {
+            self.push_block("type");
             self.advance(); // consume {
             self.skip_newlines();
             let mut fs = Vec::new();
@@ -829,7 +861,7 @@ impl Parser {
                 self.eat(&TokenKind::Comma);
                 self.skip_newlines();
             }
-            self.expect(&TokenKind::RBrace)?;
+            self.expect_closing_brace()?;
             Some(fs)
         } else {
             None
@@ -1458,7 +1490,7 @@ mod tests {
 
     #[test]
     fn parse_fn_with_needs() {
-        let prog = parse_program("fn save(user: User) -> User needs { db } {\n  user\n}");
+        let prog = parse_program("fn save(user: User) -> User needs db {\n  user\n}");
         if let Statement::FnDecl { effects, .. } = &prog.statements[0] {
             assert_eq!(effects, &["db"]);
         } else { panic!("Expected FnDecl"); }
@@ -1466,7 +1498,7 @@ mod tests {
 
     #[test]
     fn parse_fn_with_error_types() {
-        let prog = parse_program("fn find(id: ID) -> User or NotFound needs { db } {\n  id\n}");
+        let prog = parse_program("fn find(id: ID) -> User or NotFound needs db {\n  id\n}");
         if let Statement::FnDecl { error_types, return_type, .. } = &prog.statements[0] {
             assert!(return_type.is_some());
             assert_eq!(error_types, &["NotFound"]);
@@ -1480,6 +1512,34 @@ mod tests {
             assert_eq!(params.len(), 0);
             assert!(return_type.is_none());
         } else { panic!("Expected FnDecl"); }
+    }
+
+    #[test]
+    fn parse_fn_needs_multiple_effects() {
+        let prog = parse_program("fn save(user: User) -> User needs db, time, rng {\n  user\n}");
+        if let Statement::FnDecl { effects, .. } = &prog.statements[0] {
+            assert_eq!(effects, &["db", "time", "rng"]);
+        } else { panic!("Expected FnDecl"); }
+    }
+
+    #[test]
+    fn parse_fn_needs_single_effect() {
+        let prog = parse_program("fn save(user: User) -> User needs db {\n  user\n}");
+        if let Statement::FnDecl { effects, .. } = &prog.statements[0] {
+            assert_eq!(effects, &["db"]);
+        } else { panic!("Expected FnDecl"); }
+    }
+
+    #[test]
+    fn error_message_includes_block_context() {
+        // Intentionally malformed: missing closing brace for function
+        let input = "fn foo() {\n  42\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let err = parser.parse().unwrap_err();
+        let msg = &err[0].message;
+        assert!(msg.contains("function"), "Error should mention 'function' context, got: {}", msg);
     }
 
     // --- Type declaration tests ---
@@ -1629,7 +1689,7 @@ fn is_admin(role: Role) -> Bool {
     #[test]
     fn integration_intent_fn_with_needs() {
         let input = r#"intent "create a new user"
-fn create_user(data: NewUser) -> User needs { db, time, rng } {
+fn create_user(data: NewUser) -> User needs db, time, rng {
   let id: ID = rng.uuid()
   User {
     id: id,
