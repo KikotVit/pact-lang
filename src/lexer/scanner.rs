@@ -330,7 +330,34 @@ impl Lexer {
     }
 
     fn read_identifier_or_keyword(&mut self) -> Result<Token, LexerError> {
-        Err(self.error(1, "Not yet implemented", None))
+        let start_pos = self.pos;
+        let start_line = self.line;
+        let start_col = self.column;
+        let mut word = String::new();
+
+        // Read alphanumeric characters and underscores
+        while !self.is_at_end() && (self.current().is_alphanumeric() || self.current() == '_') {
+            word.push(self.current());
+            self.advance();
+        }
+
+        let length = self.pos - start_pos;
+        let span = Span {
+            line: start_line,
+            column: start_col,
+            offset: start_pos,
+            length,
+        };
+
+        // Check if it's a keyword
+        let kind = match TokenKind::keyword_from_str(&word) {
+            Some(TokenKind::True) => TokenKind::BoolLiteral(true),
+            Some(TokenKind::False) => TokenKind::BoolLiteral(false),
+            Some(keyword) => keyword,
+            None => TokenKind::Identifier(word),
+        };
+
+        Ok(Token { kind, span })
     }
 
     fn read_string(&mut self) -> Result<Token, LexerError> {
@@ -570,6 +597,77 @@ mod tests {
             vec![
                 TokenKind::IntLiteral(42),
                 TokenKind::Dot,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn identifiers() {
+        assert_eq!(
+            tokenize("hello world foo_bar _private"),
+            vec![
+                TokenKind::Identifier("hello".to_string()),
+                TokenKind::Identifier("world".to_string()),
+                TokenKind::Identifier("foo_bar".to_string()),
+                TokenKind::Identifier("_private".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn keywords() {
+        assert_eq!(
+            tokenize("fn let var type if else match return"),
+            vec![
+                TokenKind::Fn, TokenKind::Let, TokenKind::Var, TokenKind::Type,
+                TokenKind::If, TokenKind::Else, TokenKind::Match, TokenKind::Return,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn contextual_words_are_identifiers() {
+        assert_eq!(
+            tokenize("where by to first last ascending descending"),
+            vec![
+                TokenKind::Identifier("where".to_string()),
+                TokenKind::Identifier("by".to_string()),
+                TokenKind::Identifier("to".to_string()),
+                TokenKind::Identifier("first".to_string()),
+                TokenKind::Identifier("last".to_string()),
+                TokenKind::Identifier("ascending".to_string()),
+                TokenKind::Identifier("descending".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn bool_literals_from_keywords() {
+        assert_eq!(
+            tokenize("true false"),
+            vec![
+                TokenKind::BoolLiteral(true),
+                TokenKind::BoolLiteral(false),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn all_23_keywords() {
+        assert_eq!(
+            tokenize("fn let var type if else match return use intent ensure needs route test app check nothing and or not as"),
+            vec![
+                TokenKind::Fn, TokenKind::Let, TokenKind::Var, TokenKind::Type,
+                TokenKind::If, TokenKind::Else, TokenKind::Match, TokenKind::Return,
+                TokenKind::Use, TokenKind::Intent, TokenKind::Ensure, TokenKind::Needs,
+                TokenKind::Route, TokenKind::Test, TokenKind::App, TokenKind::Check,
+                TokenKind::Nothing, TokenKind::And, TokenKind::Or, TokenKind::Not,
+                TokenKind::As,
                 TokenKind::Eof,
             ]
         );
