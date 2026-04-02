@@ -117,10 +117,108 @@ impl Parser {
         Err(self.error(message, hint))
     }
 
-    // --- Expression parsing (stub, replaced in Task 3+) ---
+    // --- Expression parsing ---
 
     pub fn parse_expression(&mut self) -> Result<Expr, ParseError> {
-        self.fail("Expression parsing not yet implemented", None)
+        self.parse_pipeline()
+    }
+
+    fn parse_pipeline(&mut self) -> Result<Expr, ParseError> {
+        self.parse_or()
+    }
+
+    fn parse_or(&mut self) -> Result<Expr, ParseError> {
+        self.parse_and()
+    }
+
+    fn parse_and(&mut self) -> Result<Expr, ParseError> {
+        self.parse_not()
+    }
+
+    fn parse_not(&mut self) -> Result<Expr, ParseError> {
+        self.parse_comparison()
+    }
+
+    fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
+        self.parse_addition()
+    }
+
+    fn parse_addition(&mut self) -> Result<Expr, ParseError> {
+        self.parse_multiplication()
+    }
+
+    fn parse_multiplication(&mut self) -> Result<Expr, ParseError> {
+        self.parse_unary()
+    }
+
+    fn parse_unary(&mut self) -> Result<Expr, ParseError> {
+        self.parse_postfix()
+    }
+
+    fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
+        self.parse_primary()
+    }
+
+    fn parse_primary(&mut self) -> Result<Expr, ParseError> {
+        match self.current_kind().clone() {
+            TokenKind::IntLiteral(n) => {
+                self.advance();
+                Ok(Expr::IntLiteral(n))
+            }
+            TokenKind::FloatLiteral(n) => {
+                self.advance();
+                Ok(Expr::FloatLiteral(n))
+            }
+            TokenKind::BoolLiteral(b) => {
+                self.advance();
+                Ok(Expr::BoolLiteral(b))
+            }
+            TokenKind::Nothing => {
+                self.advance();
+                Ok(Expr::Nothing)
+            }
+            TokenKind::Identifier(name) => {
+                self.advance();
+                Ok(Expr::Identifier(name))
+            }
+            TokenKind::LParen => {
+                self.advance(); // consume '('
+                let expr = self.parse_expression()?;
+                self.expect(&TokenKind::RParen)?;
+                Ok(expr)
+            }
+            TokenKind::Dot => {
+                self.parse_dot_shorthand()
+            }
+            TokenKind::StringStart | TokenKind::RawStringLiteral(_) => {
+                self.fail("Strings not yet implemented", None)
+            }
+            TokenKind::If => {
+                self.fail("If not yet implemented", None)
+            }
+            TokenKind::Match => {
+                self.fail("Match not yet implemented", None)
+            }
+            TokenKind::Ensure => {
+                self.advance(); // consume 'ensure'
+                let expr = self.parse_expression()?;
+                Ok(Expr::Ensure(Box::new(expr)))
+            }
+            _ => {
+                self.fail("Expected expression", None)
+            }
+        }
+    }
+
+    fn parse_dot_shorthand(&mut self) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::Dot)?; // consume initial '.'
+        let first = self.expect_identifier()?;
+        let mut parts = vec![first];
+        while self.eat(&TokenKind::Dot) {
+            let name = self.expect_identifier()?;
+            parts.push(name);
+        }
+        Ok(Expr::DotShorthand(parts))
     }
 }
 
@@ -146,5 +244,52 @@ mod tests {
     fn parser_creates_empty_program() {
         let prog = parse_program("");
         assert_eq!(prog.statements.len(), 0);
+    }
+
+    #[test]
+    fn parse_int_literal() {
+        assert_eq!(parse_expr("42"), Expr::IntLiteral(42));
+    }
+
+    #[test]
+    fn parse_float_literal() {
+        assert_eq!(parse_expr("3.14"), Expr::FloatLiteral(3.14));
+    }
+
+    #[test]
+    fn parse_bool_literal() {
+        assert_eq!(parse_expr("true"), Expr::BoolLiteral(true));
+        assert_eq!(parse_expr("false"), Expr::BoolLiteral(false));
+    }
+
+    #[test]
+    fn parse_nothing() {
+        assert_eq!(parse_expr("nothing"), Expr::Nothing);
+    }
+
+    #[test]
+    fn parse_identifier() {
+        assert_eq!(parse_expr("foo"), Expr::Identifier("foo".to_string()));
+    }
+
+    #[test]
+    fn parse_grouped_expression() {
+        assert_eq!(parse_expr("(42)"), Expr::IntLiteral(42));
+    }
+
+    #[test]
+    fn parse_dot_shorthand_simple() {
+        assert_eq!(
+            parse_expr(".active"),
+            Expr::DotShorthand(vec!["active".to_string()]),
+        );
+    }
+
+    #[test]
+    fn parse_dot_shorthand_nested() {
+        assert_eq!(
+            parse_expr(".values.length"),
+            Expr::DotShorthand(vec!["values".to_string(), "length".to_string()]),
+        );
     }
 }
