@@ -599,6 +599,14 @@ impl Parser {
             TokenKind::Var => self.parse_let_or_var(true)?,
             TokenKind::Return => self.parse_return()?,
             TokenKind::Use => self.parse_use()?,
+            TokenKind::Fn => self.parse_fn_decl(None)?,
+            TokenKind::Intent => {
+                self.advance(); // consume intent
+                let intent = self.parse_intent_string()?;
+                self.skip_newlines();
+                self.parse_fn_decl(Some(intent))?
+            }
+            TokenKind::Type => self.parse_type_decl_stmt()?,
             _ => {
                 let expr = self.parse_expression()?;
                 Statement::Expression(expr)
@@ -642,6 +650,113 @@ impl Parser {
             path.push(self.expect_identifier()?);
         }
         Ok(Statement::Use { path })
+    }
+
+    fn parse_fn_decl(&mut self, intent: Option<String>) -> Result<Statement, ParseError> {
+        self.expect(&TokenKind::Fn)?;
+        let name = self.expect_identifier()?;
+
+        // Parameters
+        self.expect(&TokenKind::LParen)?;
+        let params = self.parse_params()?;
+        self.expect(&TokenKind::RParen)?;
+
+        // Optional return type: -> TypeExpr
+        let mut return_type = None;
+        let mut error_types = Vec::new();
+        if self.eat(&TokenKind::Arrow) {
+            let ty = self.parse_type_expr()?;
+            // If the type is a Result, extract ok type and errors
+            match ty {
+                TypeExpr::Result { ok, errors } => {
+                    return_type = Some(*ok);
+                    error_types = errors;
+                }
+                other => {
+                    return_type = Some(other);
+                }
+            }
+        }
+
+        // Optional needs { effect1, effect2 }
+        let mut effects = Vec::new();
+        if self.eat(&TokenKind::Needs) {
+            self.expect(&TokenKind::LBrace)?;
+            if !self.at(&TokenKind::RBrace) {
+                effects.push(self.expect_identifier()?);
+                while self.eat(&TokenKind::Comma) {
+                    if self.at(&TokenKind::RBrace) { break; }
+                    effects.push(self.expect_identifier()?);
+                }
+            }
+            self.expect(&TokenKind::RBrace)?;
+        }
+
+        // Body
+        self.expect(&TokenKind::LBrace)?;
+        let body = self.parse_block_body()?;
+        self.expect(&TokenKind::RBrace)?;
+
+        Ok(Statement::FnDecl {
+            name,
+            intent,
+            params,
+            return_type,
+            error_types,
+            effects,
+            body,
+        })
+    }
+
+    fn parse_intent_string(&mut self) -> Result<String, ParseError> {
+        match self.current_kind().clone() {
+            TokenKind::RawStringLiteral(content) => {
+                self.advance();
+                Ok(content)
+            }
+            TokenKind::StringStart => {
+                self.advance(); // consume StringStart
+                // Expect a single string fragment (intent strings are not interpolated)
+                if let TokenKind::StringFragment(text) = self.current_kind().clone() {
+                    self.advance();
+                    self.expect(&TokenKind::StringEnd)?;
+                    Ok(text)
+                } else if self.at(&TokenKind::StringEnd) {
+                    self.advance();
+                    Ok(String::new())
+                } else {
+                    self.fail("Expected string content for intent", None)
+                }
+            }
+            _ => self.fail(
+                &format!("Expected string after 'intent', found {:?}", self.current_kind()),
+                None,
+            ),
+        }
+    }
+
+    fn parse_params(&mut self) -> Result<Vec<Param>, ParseError> {
+        let mut params = Vec::new();
+        if self.at(&TokenKind::RParen) {
+            return Ok(params);
+        }
+        let name = self.expect_identifier()?;
+        self.expect(&TokenKind::Colon)?;
+        let type_ann = self.parse_type_expr()?;
+        params.push(Param { name, type_ann });
+        while self.eat(&TokenKind::Comma) {
+            if self.at(&TokenKind::RParen) { break; } // trailing comma
+            let name = self.expect_identifier()?;
+            self.expect(&TokenKind::Colon)?;
+            let type_ann = self.parse_type_expr()?;
+            params.push(Param { name, type_ann });
+        }
+        Ok(params)
+    }
+
+    fn parse_type_decl_stmt(&mut self) -> Result<Statement, ParseError> {
+        // Placeholder for Task 13
+        self.fail("Type declarations not yet implemented", None)
     }
 
     fn parse_string_expr(&mut self) -> Result<Expr, ParseError> {
@@ -1194,5 +1309,52 @@ mod tests {
     fn parse_ensure_as_expression_statement() {
         let prog = parse_program("ensure amount > 0");
         assert!(matches!(&prog.statements[0], Statement::Expression(Expr::Ensure(_))));
+    }
+
+    // --- Function declaration tests ---
+
+    #[test]
+    fn parse_simple_fn() {
+        let prog = parse_program("fn add(a: Int, b: Int) -> Int {\n  a + b\n}");
+        if let Statement::FnDecl { name, params, return_type, body, .. } = &prog.statements[0] {
+            assert_eq!(name, "add");
+            assert_eq!(params.len(), 2);
+            assert!(return_type.is_some());
+            assert_eq!(body.len(), 1);
+        } else { panic!("Expected FnDecl"); }
+    }
+
+    #[test]
+    fn parse_fn_with_intent() {
+        let prog = parse_program("intent \"find user by ID\"\nfn find_user(id: ID) -> User {\n  id\n}");
+        if let Statement::FnDecl { intent, .. } = &prog.statements[0] {
+            assert_eq!(intent.as_deref(), Some("find user by ID"));
+        } else { panic!("Expected FnDecl"); }
+    }
+
+    #[test]
+    fn parse_fn_with_needs() {
+        let prog = parse_program("fn save(user: User) -> User needs { db } {\n  user\n}");
+        if let Statement::FnDecl { effects, .. } = &prog.statements[0] {
+            assert_eq!(effects, &["db"]);
+        } else { panic!("Expected FnDecl"); }
+    }
+
+    #[test]
+    fn parse_fn_with_error_types() {
+        let prog = parse_program("fn find(id: ID) -> User or NotFound needs { db } {\n  id\n}");
+        if let Statement::FnDecl { error_types, return_type, .. } = &prog.statements[0] {
+            assert!(return_type.is_some());
+            assert_eq!(error_types, &["NotFound"]);
+        } else { panic!("Expected FnDecl"); }
+    }
+
+    #[test]
+    fn parse_fn_no_params_no_return() {
+        let prog = parse_program("fn greet() {\n  nothing\n}");
+        if let Statement::FnDecl { params, return_type, .. } = &prog.statements[0] {
+            assert_eq!(params.len(), 0);
+            assert!(return_type.is_none());
+        } else { panic!("Expected FnDecl"); }
     }
 }
