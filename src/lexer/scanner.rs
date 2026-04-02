@@ -9,6 +9,7 @@ pub struct Lexer {
     column: usize,
     tokens: Vec<Token>,
     delimiter_depth: usize,
+    last_token_kind: Option<TokenKind>,
 }
 
 impl Lexer {
@@ -21,6 +22,7 @@ impl Lexer {
             column: 1,
             tokens: Vec::new(),
             delimiter_depth: 0,
+            last_token_kind: None,
         }
     }
 
@@ -28,12 +30,17 @@ impl Lexer {
         loop {
             let token = self.next_token()?;
             let is_eof = token.kind == TokenKind::Eof;
-            self.tokens.push(token);
+            self.push_token(token);
             if is_eof {
                 break;
             }
         }
         Ok(self.tokens.clone())
+    }
+
+    fn push_token(&mut self, token: Token) {
+        self.last_token_kind = Some(token.kind.clone());
+        self.tokens.push(token);
     }
 
     fn next_token(&mut self) -> Result<Token, LexerError> {
@@ -51,12 +58,35 @@ impl Lexer {
                 let token = self.make_token(TokenKind::Newline, 1);
                 self.advance();
 
-                // Inside balanced delimiters: suppress newline
+                // Rule 1: Inside balanced delimiters — suppress
                 if self.delimiter_depth > 0 {
                     return self.next_token();
                 }
 
-                // Peek ahead: if next non-whitespace is `|`, suppress newline
+                // Rule 2: After continuation tokens — suppress
+                let is_continuation = matches!(
+                    self.last_token_kind.as_ref(),
+                    Some(TokenKind::Pipe)
+                    | Some(TokenKind::Arrow)
+                    | Some(TokenKind::FatArrow)
+                    | Some(TokenKind::Comma)
+                    | Some(TokenKind::Assign)
+                    | Some(TokenKind::Eq)
+                    | Some(TokenKind::NotEq)
+                    | Some(TokenKind::LessEq)
+                    | Some(TokenKind::GreaterEq)
+                    | Some(TokenKind::Plus)
+                    | Some(TokenKind::Minus)
+                    | Some(TokenKind::Star)
+                    | Some(TokenKind::Slash)
+                    | Some(TokenKind::And)
+                    | Some(TokenKind::Or)
+                );
+                if is_continuation {
+                    return self.next_token();
+                }
+
+                // Rule 3: Next non-whitespace is `|` — suppress newline
                 let mut peek_pos = self.pos;
                 while peek_pos < self.source.len() {
                     let c = self.source[peek_pos];
@@ -377,18 +407,18 @@ impl Lexer {
                 // It's """, multiline string
                 self.advance(); // consume second '"'
                 self.advance(); // consume third '"'
-                self.tokens.push(start_token);
+                self.push_token(start_token);
                 return self.read_multiline_string();
             } else {
                 // It's "" — empty string
                 let end_token = self.make_token(TokenKind::StringEnd, 1);
                 self.advance(); // consume closing '"'
-                self.tokens.push(start_token);
+                self.push_token(start_token);
                 return Ok(end_token);
             }
         }
 
-        self.tokens.push(start_token);
+        self.push_token(start_token);
         self.read_string_content()
     }
 
@@ -410,7 +440,7 @@ impl Lexer {
                             TokenKind::StringFragment(fragment),
                             0,
                         );
-                        self.tokens.push(frag_token);
+                        self.push_token(frag_token);
                     }
                     let end_token = self.make_token(TokenKind::StringEnd, 1);
                     self.advance(); // consume closing '"'
@@ -429,11 +459,11 @@ impl Lexer {
                                 TokenKind::StringFragment(fragment),
                                 0,
                             );
-                            self.tokens.push(frag_token);
+                            self.push_token(frag_token);
                         }
                         let interp_start = self.make_token(TokenKind::InterpolationStart, 1);
                         self.advance(); // consume '{'
-                        self.tokens.push(interp_start);
+                        self.push_token(interp_start);
                         self.read_interpolation()?;
                         // Continue reading string content after interpolation
                         return self.read_string_content();
@@ -501,7 +531,7 @@ impl Lexer {
             if self.current() == '}' && brace_depth == 0 {
                 let interp_end = self.make_token(TokenKind::InterpolationEnd, 1);
                 self.advance(); // consume '}'
-                self.tokens.push(interp_end);
+                self.push_token(interp_end);
                 return Ok(());
             }
 
@@ -514,16 +544,16 @@ impl Lexer {
                     if self.delimiter_depth > 0 {
                         self.delimiter_depth -= 1;
                     }
-                    self.tokens.push(token);
+                    self.push_token(token);
                 }
                 TokenKind::RBrace => {
                     // next_token already decremented delimiter_depth, undo that
                     self.delimiter_depth += 1;
                     brace_depth -= 1;
-                    self.tokens.push(token);
+                    self.push_token(token);
                 }
                 _ => {
-                    self.tokens.push(token);
+                    self.push_token(token);
                 }
             }
         }
@@ -549,7 +579,7 @@ impl Lexer {
                                 TokenKind::StringFragment(fragment),
                                 0,
                             );
-                            self.tokens.push(frag_token);
+                            self.push_token(frag_token);
                         }
                         let end_token = self.make_token(TokenKind::StringEnd, 3);
                         self.advance(); // consume first '"'
@@ -575,12 +605,12 @@ impl Lexer {
                                 TokenKind::StringFragment(fragment),
                                 0,
                             );
-                            self.tokens.push(frag_token);
+                            self.push_token(frag_token);
                             fragment = String::new();
                         }
                         let interp_start = self.make_token(TokenKind::InterpolationStart, 1);
                         self.advance(); // consume '{'
-                        self.tokens.push(interp_start);
+                        self.push_token(interp_start);
                         self.read_interpolation()?;
                         // Continue reading multiline string content
                         // (recursive call not ideal but reuse pattern from task spec)
@@ -820,10 +850,10 @@ mod tests {
     #[test]
     fn comment_skipped() {
         assert_eq!(
-            tokenize("+ // comment\n- // another"),
+            tokenize("a // comment\nb // another"),
             vec![
-                TokenKind::Plus, TokenKind::Newline,
-                TokenKind::Minus, TokenKind::Eof,
+                TokenKind::Identifier("a".to_string()), TokenKind::Newline,
+                TokenKind::Identifier("b".to_string()), TokenKind::Eof,
             ]
         );
     }
@@ -858,8 +888,13 @@ mod tests {
     #[test]
     fn newline_emitted_at_top_level() {
         assert_eq!(
-            tokenize("+\n-"),
-            vec![TokenKind::Plus, TokenKind::Newline, TokenKind::Minus, TokenKind::Eof]
+            tokenize("a\nb"),
+            vec![
+                TokenKind::Identifier("a".to_string()),
+                TokenKind::Newline,
+                TokenKind::Identifier("b".to_string()),
+                TokenKind::Eof,
+            ]
         );
     }
 
@@ -1136,6 +1171,98 @@ mod tests {
                 TokenKind::Identifier("raw".to_string()),
                 TokenKind::Plus,
                 TokenKind::IntLiteral(1),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    // --- Newline continuation tests ---
+
+    #[test]
+    fn newline_suppressed_after_pipe() {
+        assert_eq!(
+            tokenize("users |\nfilter"),
+            vec![
+                TokenKind::Identifier("users".to_string()),
+                TokenKind::Pipe,
+                TokenKind::Identifier("filter".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn newline_suppressed_after_comma() {
+        assert_eq!(
+            tokenize("a,\nb"),
+            vec![
+                TokenKind::Identifier("a".to_string()),
+                TokenKind::Comma,
+                TokenKind::Identifier("b".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn newline_suppressed_after_arrow() {
+        assert_eq!(
+            tokenize("fn foo() ->\nInt"),
+            vec![
+                TokenKind::Fn,
+                TokenKind::Identifier("foo".to_string()),
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Arrow,
+                TokenKind::Identifier("Int".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn newline_suppressed_after_assign() {
+        assert_eq!(
+            tokenize("let x =\n42"),
+            vec![
+                TokenKind::Let,
+                TokenKind::Identifier("x".to_string()),
+                TokenKind::Assign,
+                TokenKind::IntLiteral(42),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn newline_suppressed_after_plus() {
+        assert_eq!(
+            tokenize("a +\nb"),
+            vec![
+                TokenKind::Identifier("a".to_string()),
+                TokenKind::Plus,
+                TokenKind::Identifier("b".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn newline_before_pipe_multiline_pipeline() {
+        assert_eq!(
+            tokenize("users\n  | filter where .active\n  | map to .name"),
+            vec![
+                TokenKind::Identifier("users".to_string()),
+                TokenKind::Pipe,
+                TokenKind::Identifier("filter".to_string()),
+                TokenKind::Identifier("where".to_string()),
+                TokenKind::Dot,
+                TokenKind::Identifier("active".to_string()),
+                TokenKind::Pipe,
+                TokenKind::Identifier("map".to_string()),
+                TokenKind::Identifier("to".to_string()),
+                TokenKind::Dot,
+                TokenKind::Identifier("name".to_string()),
                 TokenKind::Eof,
             ]
         );
