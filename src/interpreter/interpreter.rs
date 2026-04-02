@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::ast::{BinaryOp, Expr, Program, Statement, StringExpr, StringPart, UnaryOp};
+use crate::parser::ast::{BinaryOp, Expr, MatchArm, Pattern, Program, Statement, StringExpr, StringPart, UnaryOp};
 use super::environment::Environment;
 use super::errors::RuntimeError;
 use super::value::Value;
@@ -18,6 +18,8 @@ pub struct Interpreter {
     fixed_time: Option<String>,
     rng_seed: Option<u64>,
     rng_counter: u64,
+    /// Storage for return value when propagating returns through expressions
+    pending_return: Option<Value>,
 }
 
 impl Interpreter {
@@ -29,6 +31,7 @@ impl Interpreter {
             fixed_time: None,
             rng_seed: None,
             rng_counter: 0,
+            pending_return: None,
         }
     }
 
@@ -80,9 +83,32 @@ impl Interpreter {
             }
             Statement::TypeDecl(_) => Ok(StmtResult::Value(Value::Nothing)),
             Statement::Use { .. } => Ok(StmtResult::Value(Value::Nothing)),
-            Statement::Return { .. } => {
-                // Return is not implemented yet (Task 6)
-                Err(self.error("Return statements are not yet implemented"))
+            Statement::Return { value, condition } => {
+                // If there's a condition, evaluate it — skip return if falsy
+                if let Some(cond_expr) = condition {
+                    let cond_val = self.eval_expr(cond_expr, env)?;
+                    if !cond_val.is_truthy() {
+                        return Ok(StmtResult::Value(Value::Nothing));
+                    }
+                }
+                // Evaluate the return value (or Nothing if absent)
+                let ret_val = if let Some(val_expr) = value {
+                    let val = self.eval_expr(val_expr, env)?;
+                    // If the value is an identifier starting with uppercase,
+                    // treat it as an Error variant constructor
+                    match val_expr {
+                        Expr::Identifier(name) if name.starts_with(char::is_uppercase) => {
+                            Value::Error {
+                                variant: name.clone(),
+                                fields: None,
+                            }
+                        }
+                        _ => val,
+                    }
+                } else {
+                    Value::Nothing
+                };
+                Ok(StmtResult::Return(ret_val))
             }
             Statement::Expression(expr) => {
                 let val = self.eval_expr(expr, env)?;
@@ -325,20 +351,20 @@ impl Interpreter {
             Expr::ErrorPropagation(_) => {
                 Err(self.error("Error propagation is not yet implemented"))
             }
-            Expr::FnCall { .. } => {
-                Err(self.error("Function calls are not yet implemented"))
+            Expr::FnCall { callee, args } => {
+                self.eval_fn_call(callee, args, env)
             }
             Expr::Pipeline { .. } => {
                 Err(self.error("Pipelines are not yet implemented"))
             }
-            Expr::If { .. } => {
-                Err(self.error("If expressions are not yet implemented"))
+            Expr::If { condition, then_body, else_body } => {
+                self.eval_if(condition, then_body, else_body, env)
             }
-            Expr::Match { .. } => {
-                Err(self.error("Match expressions are not yet implemented"))
+            Expr::Match { subject, arms } => {
+                self.eval_match(subject, arms, env)
             }
-            Expr::Block(_) => {
-                Err(self.error("Block expressions are not yet implemented"))
+            Expr::Block(stmts) => {
+                self.eval_block(stmts, env)
             }
             Expr::StructLiteral { .. } => {
                 Err(self.error("Struct literals are not yet implemented"))
@@ -356,6 +382,182 @@ impl Interpreter {
                 Ok(Value::Bool(result))
             }
         }
+    }
+
+    // --- Function calls ---
+
+    fn eval_fn_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        env: &mut Environment,
+    ) -> Result<Value, RuntimeError> {
+        let callee_val = self.eval_expr(callee, env)?;
+        let mut arg_vals = Vec::new();
+        for arg in args {
+            arg_vals.push(self.eval_expr(arg, env)?);
+        }
+
+        match callee_val {
+            Value::Function { params, body, .. } => {
+                if params.len() != arg_vals.len() {
+                    return Err(self.error(&format!(
+                        "Expected {} arguments but got {}",
+                        params.len(),
+                        arg_vals.len()
+                    )));
+                }
+                // Create new env with parent = global (not caller env)
+                let mut fn_env = Environment::with_parent(self.global.clone());
+                for (param, val) in params.iter().zip(arg_vals) {
+                    fn_env.bind(param.name.clone(), val, false);
+                }
+                // Evaluate body statements
+                let stmts = body.clone();
+                let mut result = Value::Nothing;
+                for stmt in &stmts {
+                    match self.eval_statement(stmt, &mut fn_env) {
+                        Ok(StmtResult::Value(val)) => result = val,
+                        Ok(StmtResult::Return(val)) => return Ok(val),
+                        Err(ref e) if Self::is_return_error(e) => {
+                            // Return propagated through an expression (e.g., if block)
+                            return Ok(self.take_return_value());
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                Ok(result)
+            }
+            Value::BuiltinFn { name } => {
+                self.call_builtin(&name, arg_vals)
+            }
+            other => Err(self.error(&format!(
+                "Cannot call {} as function",
+                other.type_name()
+            ))),
+        }
+    }
+
+    fn call_builtin(&mut self, name: &str, _args: Vec<Value>) -> Result<Value, RuntimeError> {
+        Err(self.error(&format!("Builtin function '{}' is not yet implemented", name)))
+    }
+
+    // --- If/else ---
+
+    fn eval_if(
+        &mut self,
+        condition: &Expr,
+        then_body: &[Statement],
+        else_body: &Option<Vec<Statement>>,
+        env: &mut Environment,
+    ) -> Result<Value, RuntimeError> {
+        let cond_val = self.eval_expr(condition, env)?;
+        if cond_val.is_truthy() {
+            let mut child_env = Environment::with_parent(env.clone());
+            self.eval_body(then_body, &mut child_env)
+        } else if let Some(else_stmts) = else_body {
+            let mut child_env = Environment::with_parent(env.clone());
+            self.eval_body(else_stmts, &mut child_env)
+        } else {
+            Ok(Value::Nothing)
+        }
+    }
+
+    /// Evaluate a list of statements, returning the last value.
+    /// Propagates StmtResult::Return as a special RuntimeError so it
+    /// can escape through expressions back to eval_fn_call.
+    fn eval_body(
+        &mut self,
+        stmts: &[Statement],
+        env: &mut Environment,
+    ) -> Result<Value, RuntimeError> {
+        let stmts = stmts.to_vec();
+        let mut result = Value::Nothing;
+        for stmt in &stmts {
+            match self.eval_statement(stmt, env)? {
+                StmtResult::Value(val) => result = val,
+                StmtResult::Return(val) => return Err(self.make_return_error(val)),
+            }
+        }
+        Ok(result)
+    }
+
+    // --- Match ---
+
+    fn eval_match(
+        &mut self,
+        subject: &Expr,
+        arms: &[MatchArm],
+        env: &mut Environment,
+    ) -> Result<Value, RuntimeError> {
+        let subject_val = self.eval_expr(subject, env)?;
+
+        for arm in arms {
+            if self.pattern_matches(&arm.pattern, &subject_val, env)? {
+                return self.eval_expr(&arm.body, env);
+            }
+        }
+
+        Err(self.error("No matching pattern"))
+    }
+
+    fn pattern_matches(
+        &mut self,
+        pattern: &Pattern,
+        subject: &Value,
+        env: &mut Environment,
+    ) -> Result<bool, RuntimeError> {
+        match pattern {
+            Pattern::Wildcard => Ok(true),
+            Pattern::Literal(expr) => {
+                let pat_val = self.eval_expr(expr, env)?;
+                Ok(pat_val == *subject)
+            }
+            Pattern::Identifier(name) => {
+                match subject {
+                    Value::Variant { variant, .. } if variant == name => Ok(true),
+                    Value::Error { variant, .. } if variant == name => Ok(true),
+                    _ => {
+                        // Fallback: treat as catch-all match (like wildcard)
+                        Ok(true)
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Block evaluation ---
+
+    fn eval_block(
+        &mut self,
+        stmts: &[Statement],
+        env: &mut Environment,
+    ) -> Result<Value, RuntimeError> {
+        let mut child_env = Environment::with_parent(env.clone());
+        self.eval_body(stmts, &mut child_env)
+    }
+
+    // --- Return error mechanism ---
+    // We use a special RuntimeError to propagate returns through expressions.
+    // eval_fn_call catches these and extracts the return value.
+
+    fn make_return_error(&mut self, value: Value) -> RuntimeError {
+        self.pending_return = Some(value);
+        RuntimeError {
+            line: 0,
+            column: 0,
+            message: "__RETURN__".to_string(),
+            hint: None,
+            source_line: String::new(),
+        }
+    }
+
+    fn is_return_error(err: &RuntimeError) -> bool {
+        err.message == "__RETURN__"
+    }
+
+    fn take_return_value(&mut self) -> Value {
+        self.pending_return.take().unwrap_or(Value::Nothing)
     }
 
     /// Create a RuntimeError with the given message.
@@ -547,5 +749,59 @@ mod tests {
             eval("let x: Int = 5\n\"x is {x + 1}\""),
             Value::String("x is 6".to_string()),
         );
+    }
+
+    // Task 5: Function calls, if/else, match, blocks, return
+
+    #[test]
+    fn eval_simple_function() {
+        assert_eq!(eval("fn add(a: Int, b: Int) -> Int {\n  a + b\n}\nadd(1, 2)"), Value::Int(3));
+    }
+
+    #[test]
+    fn eval_function_multiple_stmts() {
+        assert_eq!(eval("fn double(x: Int) -> Int {\n  let r: Int = x * 2\n  r\n}\ndouble(5)"), Value::Int(10));
+    }
+
+    #[test]
+    fn eval_nested_calls() {
+        assert_eq!(eval("fn add(a: Int, b: Int) -> Int {\n  a + b\n}\nfn double(x: Int) -> Int {\n  add(x, x)\n}\ndouble(3)"), Value::Int(6));
+    }
+
+    #[test]
+    fn eval_recursive_function() {
+        let input = "fn fact(n: Int) -> Int {\n  if n <= 1 {\n    1\n  } else {\n    n * fact(n - 1)\n  }\n}\nfact(5)";
+        assert_eq!(eval(input), Value::Int(120));
+    }
+
+    #[test]
+    fn eval_if_true() {
+        assert_eq!(eval("if true {\n  1\n} else {\n  2\n}"), Value::Int(1));
+    }
+
+    #[test]
+    fn eval_if_false() {
+        assert_eq!(eval("if false {\n  1\n} else {\n  2\n}"), Value::Int(2));
+    }
+
+    #[test]
+    fn eval_if_no_else() {
+        assert_eq!(eval("if false {\n  1\n}"), Value::Nothing);
+    }
+
+    #[test]
+    fn eval_match_wildcard() {
+        assert_eq!(eval("match 42 {\n  _ => true,\n}"), Value::Bool(true));
+    }
+
+    #[test]
+    fn eval_match_literal() {
+        assert_eq!(eval("match 1 {\n  1 => \"one\",\n  _ => \"other\",\n}"), Value::String("one".to_string()));
+    }
+
+    #[test]
+    fn eval_early_return() {
+        let input = "fn verify(x: Int) -> Int {\n  if x > 0 {\n    return x\n  }\n  0\n}\nverify(5)";
+        assert_eq!(eval(input), Value::Int(5));
     }
 }
