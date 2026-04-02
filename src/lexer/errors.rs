@@ -10,6 +10,8 @@ pub struct LexerError {
     pub source_line: String,
 }
 
+impl std::error::Error for LexerError {}
+
 impl fmt::Display for LexerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Error at line {}, col {}:", self.line, self.column)?;
