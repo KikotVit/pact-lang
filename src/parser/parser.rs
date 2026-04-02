@@ -48,6 +48,15 @@ impl Parser {
         }
     }
 
+    fn peek_at(&self, offset: usize) -> &TokenKind {
+        let idx = self.pos + offset;
+        if idx < self.tokens.len() {
+            &self.tokens[idx].kind
+        } else {
+            &TokenKind::Eof
+        }
+    }
+
     fn advance(&mut self) -> &Token {
         let token = &self.tokens[self.pos];
         if self.pos < self.tokens.len() - 1 {
@@ -446,7 +455,21 @@ impl Parser {
             }
             TokenKind::Identifier(name) => {
                 self.advance();
+                // Struct literal: PascalCase followed by {
+                if self.at(&TokenKind::LBrace) && name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    return self.parse_struct_literal(Some(name));
+                }
                 Ok(Expr::Identifier(name))
+            }
+            TokenKind::LBrace => {
+                if self.is_struct_literal_start() {
+                    self.parse_struct_literal(None)
+                } else {
+                    self.advance(); // consume {
+                    let body = self.parse_block_body()?;
+                    self.expect(&TokenKind::RBrace)?;
+                    Ok(Expr::Block(body))
+                }
             }
             TokenKind::LParen => {
                 self.advance(); // consume '('
@@ -811,6 +834,52 @@ impl Parser {
             None
         };
         Ok(UnionVariant { name, fields })
+    }
+
+    fn is_struct_literal_start(&self) -> bool {
+        // We're looking at `{`. Check if the content looks like struct fields:
+        // { identifier : ... or { ... (spread)
+        if !self.at(&TokenKind::LBrace) {
+            return false;
+        }
+        // peek past { (and any newlines)
+        let mut offset = 1;
+        while *self.peek_at(offset) == TokenKind::Newline {
+            offset += 1;
+        }
+        // Check for spread
+        if *self.peek_at(offset) == TokenKind::Spread {
+            return true;
+        }
+        // Check for identifier followed by colon
+        if let TokenKind::Identifier(_) = self.peek_at(offset) {
+            if *self.peek_at(offset + 1) == TokenKind::Colon {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn parse_struct_literal(&mut self, name: Option<String>) -> Result<Expr, ParseError> {
+        self.expect(&TokenKind::LBrace)?;
+        self.skip_newlines();
+        let mut fields = Vec::new();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            if self.at(&TokenKind::Spread) {
+                self.advance(); // consume ...
+                let expr = self.parse_expression()?;
+                fields.push(StructField::Spread(expr));
+            } else {
+                let field_name = self.expect_identifier()?;
+                self.expect(&TokenKind::Colon)?;
+                let value = self.parse_expression()?;
+                fields.push(StructField::Named { name: field_name, value });
+            }
+            self.eat(&TokenKind::Comma);
+            self.skip_newlines();
+        }
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Expr::StructLiteral { name, fields })
     }
 
     fn parse_string_expr(&mut self) -> Result<Expr, ParseError> {
@@ -1441,5 +1510,39 @@ mod tests {
             assert!(variants[0].fields.is_none());
             assert!(variants[1].fields.is_some());
         } else { panic!("Expected Union TypeDecl"); }
+    }
+
+    // --- Struct literal tests ---
+
+    #[test]
+    fn parse_struct_literal() {
+        let expr = parse_expr("User { name: x, age: 30 }");
+        if let Expr::StructLiteral { name, fields } = &expr {
+            assert_eq!(name.as_deref(), Some("User"));
+            assert_eq!(fields.len(), 2);
+        } else { panic!("Expected StructLiteral"); }
+    }
+
+    #[test]
+    fn parse_struct_literal_with_spread() {
+        let expr = parse_expr("User { ...old, name: x }");
+        if let Expr::StructLiteral { fields, .. } = &expr {
+            assert!(matches!(&fields[0], StructField::Spread(_)));
+            assert!(matches!(&fields[1], StructField::Named { .. }));
+        } else { panic!("Expected StructLiteral"); }
+    }
+
+    #[test]
+    fn parse_anonymous_struct() {
+        let expr = parse_expr("{ status: ok }");
+        if let Expr::StructLiteral { name, .. } = &expr {
+            assert!(name.is_none());
+        } else { panic!("Expected anonymous StructLiteral, got {:?}", expr); }
+    }
+
+    #[test]
+    fn parse_multi_statement_program() {
+        let prog = parse_program("use models.user.User\n\nlet x: Int = 1\nlet y: Int = 2");
+        assert_eq!(prog.statements.len(), 3);
     }
 }
