@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::parser::ast::{BinaryOp, Expr, MatchArm, Pattern, Program, Statement, StringExpr, StringPart, UnaryOp};
+use crate::parser::ast::{BinaryOp, Expr, MatchArm, Pattern, Program, Statement, StringExpr, StringPart, StructField, UnaryOp};
 use super::environment::Environment;
 use super::errors::RuntimeError;
 use super::value::Value;
@@ -93,17 +93,31 @@ impl Interpreter {
                 }
                 // Evaluate the return value (or Nothing if absent)
                 let ret_val = if let Some(val_expr) = value {
-                    let val = self.eval_expr(val_expr, env)?;
-                    // If the value is an identifier starting with uppercase,
-                    // treat it as an Error variant constructor
                     match val_expr {
+                        // `return NotFound` — uppercase identifier → Error variant
                         Expr::Identifier(name) if name.starts_with(char::is_uppercase) => {
                             Value::Error {
                                 variant: name.clone(),
                                 fields: None,
                             }
                         }
-                        _ => val,
+                        // `return BadRequest { message: "..." }` — struct literal with uppercase name → Error
+                        Expr::StructLiteral { name: Some(sname), fields: sfields }
+                            if sname.starts_with(char::is_uppercase) =>
+                        {
+                            let mut field_map = HashMap::new();
+                            for f in sfields {
+                                if let StructField::Named { name: fname, value: fval } = f {
+                                    let v = self.eval_expr(fval, env)?;
+                                    field_map.insert(fname.clone(), v);
+                                }
+                            }
+                            Value::Error {
+                                variant: sname.clone(),
+                                fields: if field_map.is_empty() { None } else { Some(field_map) },
+                            }
+                        }
+                        _ => self.eval_expr(val_expr, env)?,
                     }
                 } else {
                     Value::Nothing
@@ -348,8 +362,8 @@ impl Interpreter {
                     },
                 }
             }
-            Expr::ErrorPropagation(_) => {
-                Err(self.error("Error propagation is not yet implemented"))
+            Expr::ErrorPropagation(inner) => {
+                self.eval_error_propagation(inner, env)
             }
             Expr::FnCall { callee, args } => {
                 self.eval_fn_call(callee, args, env)
@@ -366,11 +380,11 @@ impl Interpreter {
             Expr::Block(stmts) => {
                 self.eval_block(stmts, env)
             }
-            Expr::StructLiteral { .. } => {
-                Err(self.error("Struct literals are not yet implemented"))
+            Expr::StructLiteral { name, fields } => {
+                self.eval_struct_literal(name, fields, env)
             }
-            Expr::Ensure(_) => {
-                Err(self.error("Ensure expressions are not yet implemented"))
+            Expr::Ensure(predicate) => {
+                self.eval_ensure(predicate, env)
             }
             Expr::Is { expr, type_name } => {
                 let val = self.eval_expr(expr, env)?;
@@ -523,6 +537,81 @@ impl Interpreter {
                     }
                 }
             }
+        }
+    }
+
+    // --- Struct literals ---
+
+    fn eval_struct_literal(
+        &mut self,
+        name: &Option<String>,
+        fields: &[StructField],
+        env: &mut Environment,
+    ) -> Result<Value, RuntimeError> {
+        let mut field_values = HashMap::new();
+        for field in fields {
+            match field {
+                StructField::Named { name, value } => {
+                    let val = self.eval_expr(value, env)?;
+                    field_values.insert(name.clone(), val);
+                }
+                StructField::Spread(expr) => {
+                    let val = self.eval_expr(expr, env)?;
+                    if let Value::Struct { fields: src_fields, .. } = val {
+                        for (k, v) in src_fields {
+                            // Only insert if not already set by an explicit field
+                            // (spread fields come first, explicit fields override)
+                            field_values.entry(k).or_insert(v);
+                        }
+                    } else {
+                        return Err(self.error(&format!(
+                            "Cannot spread {} into struct literal",
+                            val.type_name()
+                        )));
+                    }
+                }
+            }
+        }
+        let type_name = name.clone().unwrap_or_else(|| "anonymous".to_string());
+        Ok(Value::Struct {
+            type_name,
+            fields: field_values,
+        })
+    }
+
+    // --- Ensure ---
+
+    fn eval_ensure(
+        &mut self,
+        predicate: &Expr,
+        env: &mut Environment,
+    ) -> Result<Value, RuntimeError> {
+        let val = self.eval_expr(predicate, env)?;
+        if val.is_truthy() {
+            Ok(Value::Nothing)
+        } else {
+            Err(self.error("Ensure failed: condition evaluated to false"))
+        }
+    }
+
+    // --- Error propagation ---
+
+    fn eval_error_propagation(
+        &mut self,
+        inner: &Expr,
+        env: &mut Environment,
+    ) -> Result<Value, RuntimeError> {
+        let val = self.eval_expr(inner, env)?;
+        match val {
+            Value::Ok(v) => Ok(*v),
+            err @ Value::Error { .. } => {
+                // Propagate the error as a return from the current function
+                Err(self.make_return_error(err))
+            }
+            other => Err(self.error(&format!(
+                "Cannot use '?' on {} value (expected Ok or Error)",
+                other.type_name()
+            ))),
         }
     }
 
@@ -803,5 +892,50 @@ mod tests {
     fn eval_early_return() {
         let input = "fn verify(x: Int) -> Int {\n  if x > 0 {\n    return x\n  }\n  0\n}\nverify(5)";
         assert_eq!(eval(input), Value::Int(5));
+    }
+
+    // Task 6: Struct literals, ensure, error propagation
+
+    #[test]
+    fn eval_struct_literal() {
+        assert_eq!(
+            eval("let u: User = User { name: \"V\", age: 30 }\nu.name"),
+            Value::String("V".to_string()),
+        );
+    }
+
+    #[test]
+    fn eval_struct_spread() {
+        assert_eq!(
+            eval("let old: X = X { a: 1, b: 2 }\nlet new: X = X { ...old, a: 10 }\nnew.b"),
+            Value::Int(2),
+        );
+    }
+
+    #[test]
+    fn eval_struct_spread_override() {
+        assert_eq!(
+            eval("let old: X = X { a: 1, b: 2 }\nlet new: X = X { ...old, a: 10 }\nnew.a"),
+            Value::Int(10),
+        );
+    }
+
+    #[test]
+    fn eval_anonymous_struct() {
+        assert_eq!(
+            eval("let info: Info = { status: \"ok\" }\ninfo.status"),
+            Value::String("ok".to_string()),
+        );
+    }
+
+    #[test]
+    fn eval_ensure_pass() {
+        assert_eq!(eval("ensure 1 > 0\n42"), Value::Int(42));
+    }
+
+    #[test]
+    fn eval_ensure_fail() {
+        let err = eval_fails("ensure 1 < 0");
+        assert!(err.message.contains("Ensure") || err.message.contains("ensure"));
     }
 }
