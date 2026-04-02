@@ -104,7 +104,9 @@ enum Expr {
     UnaryOp { op: UnaryOp, operand: Box<Expr> },
     ErrorPropagation(Box<Expr>),        // expr?
 
-    // Calls
+    // Calls — method calls like db.query(...) are modeled as
+    // FnCall { callee: FieldAccess { object: "db", field: "query" }, args }
+    // No separate MethodCall node; postfix parsing handles it naturally.
     FnCall { callee: Box<Expr>, args: Vec<Expr> },
 
     // Pipeline
@@ -309,6 +311,31 @@ Newlines are statement separators. The lexer already handles continuation rules 
 - Pipeline parsing tests
 - Integration tests with real PACT code from spec
 - Error message tests (wrong token → helpful message)
+
+## Design Decisions
+
+### Method calls via postfix chaining
+
+`db.query(...)` is NOT a separate AST node. It parses as:
+`Identifier("db")` → `FieldAccess { object: db, field: "query" }` → `FnCall { callee: FieldAccess, args }`
+
+The interpreter sees `FnCall` where `callee` is `FieldAccess` and treats it as a method call on an effect/object. This avoids a separate `MethodCall` node — postfix parsing handles it naturally.
+
+### `where` only in pipeline context
+
+The original spec had `db.query("users", where .id == id)` — `where` as a function argument. This creates ambiguity (is `where` a named argument? a DSL keyword? something else?).
+
+Decision: `where` only appears after `| filter` in a pipeline. Database queries use pipeline filtering:
+
+```pact
+// correct PACT
+db.query("users") | filter where .id == id
+
+// NOT valid — where inside function call args
+db.query("users", where .id == id)
+```
+
+This keeps `where` unambiguous — it means exactly one thing in exactly one context.
 
 ## Source Spec
 
