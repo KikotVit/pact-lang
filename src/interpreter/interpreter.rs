@@ -12,6 +12,15 @@ pub enum StmtResult {
     Return(Value),
 }
 
+#[derive(Debug, Clone)]
+pub struct StoredRoute {
+    pub method: String,
+    pub path: String,
+    pub intent: String,
+    pub effects: Vec<String>,
+    pub body: Vec<Statement>,
+}
+
 pub struct Interpreter {
     pub global: Environment,
     source: String,
@@ -23,6 +32,7 @@ pub struct Interpreter {
     pending_return: Option<Value>,
     pub base_dir: Option<PathBuf>,
     pub module_cache: HashMap<PathBuf, Environment>,
+    pub routes: Vec<StoredRoute>,
 }
 
 impl Interpreter {
@@ -37,6 +47,7 @@ impl Interpreter {
             pending_return: None,
             base_dir: None,
             module_cache: HashMap::new(),
+            routes: Vec::new(),
         }
     }
 
@@ -155,6 +166,16 @@ impl Interpreter {
                     err.hint = Some("Check that the condition is correct".to_string());
                     Err(err)
                 }
+            }
+            Statement::Route { method, path, intent, effects, body } => {
+                self.routes.push(StoredRoute {
+                    method: method.clone(),
+                    path: path.clone(),
+                    intent: intent.clone(),
+                    effects: effects.clone(),
+                    body: body.clone(),
+                });
+                Ok(StmtResult::Value(Value::Nothing))
             }
         }
     }
@@ -422,6 +443,14 @@ impl Interpreter {
                     _ => val.type_name() == type_name,
                 };
                 Ok(Value::Bool(result))
+            }
+            Expr::Respond { status, body } => {
+                let status_val = self.eval_expr(status, env)?;
+                let body_val = self.eval_expr(body, env)?;
+                let mut fields = HashMap::new();
+                fields.insert("status".to_string(), status_val);
+                fields.insert("body".to_string(), body_val);
+                Ok(Value::Struct { type_name: "Response".to_string(), fields })
             }
         }
     }
@@ -729,6 +758,36 @@ impl Interpreter {
                     Value::Nothing => self.eval_expr(value, env),
                     other => Ok(other),
                 }
+            }
+            PipelineStep::OnSuccess { body } => {
+                match &current {
+                    Value::Ok(inner) => {
+                        let mut step_env = Environment::with_parent(env.clone());
+                        step_env.bind("_it".to_string(), *inner.clone(), false);
+                        self.eval_expr(body, &mut step_env)
+                    }
+                    Value::Error { .. } => Ok(current), // pass through
+                    other => {
+                        // Non-result value -- treat as success
+                        let mut step_env = Environment::with_parent(env.clone());
+                        step_env.bind("_it".to_string(), other.clone(), false);
+                        self.eval_expr(body, &mut step_env)
+                    }
+                }
+            }
+            PipelineStep::OnError { variant, body } => {
+                match &current {
+                    Value::Error { variant: v, .. } if v == variant => {
+                        let mut step_env = Environment::with_parent(env.clone());
+                        step_env.bind("_it".to_string(), current.clone(), false);
+                        self.eval_expr(body, &mut step_env)
+                    }
+                    _ => Ok(current), // pass through
+                }
+            }
+            PipelineStep::ValidateAs { .. } => {
+                // v0.3a: pass through (real validation later)
+                Ok(current)
             }
             PipelineStep::Expr(expr) => {
                 let mut child_env = Environment::with_parent(env.clone());
@@ -1179,6 +1238,29 @@ impl Interpreter {
                 &format!("Symbol '{}' not found in module '{}'", symbol_name, file_path.display()),
             ))
         }
+    }
+
+    // --- Route execution ---
+
+    pub fn execute_route(&mut self, route: &StoredRoute, request: Value) -> Result<Value, RuntimeError> {
+        let mut env = Environment::with_parent(self.global.clone());
+        env.bind("request".to_string(), request, false);
+
+        for effect_name in &route.effects {
+            if let Some(effect) = self.global.lookup(effect_name) {
+                env.bind(effect_name.clone(), effect.clone(), false);
+            }
+        }
+
+        let mut result = Value::Nothing;
+        let body = route.body.clone();
+        for stmt in &body {
+            match self.eval_statement(stmt, &mut env)? {
+                StmtResult::Value(val) => result = val,
+                StmtResult::Return(val) => return Ok(val),
+            }
+        }
+        Ok(result)
     }
 
     // --- Test runner ---
@@ -2021,5 +2103,74 @@ test "add works" {
         assert_eq!(interp.module_cache.len(), 1);
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn eval_respond_expression() {
+        let result = eval("respond 200 with nothing");
+        if let Value::Struct { type_name, fields } = &result {
+            assert_eq!(type_name, "Response");
+            assert_eq!(fields.get("status"), Some(&Value::Int(200)));
+        } else { panic!("Expected Response struct"); }
+    }
+
+    #[test]
+    fn eval_respond_with_struct_body() {
+        let result = eval(r#"respond 201 with { message: "created" }"#);
+        if let Value::Struct { type_name, fields } = &result {
+            assert_eq!(type_name, "Response");
+            assert_eq!(fields.get("status"), Some(&Value::Int(201)));
+            assert!(matches!(fields.get("body"), Some(Value::Struct { .. })));
+        } else { panic!("Expected Response struct"); }
+    }
+
+    #[test]
+    fn eval_route_stored() {
+        let input = "route GET \"/health\" {\n  intent \"health check\"\n  respond 200 with { status: \"ok\" }\n}";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.interpret(&program).unwrap();
+        assert_eq!(interp.routes.len(), 1);
+        assert_eq!(interp.routes[0].method, "GET");
+    }
+
+    #[test]
+    fn eval_route_execution() {
+        let input = "route GET \"/health\" {\n  intent \"health check\"\n  respond 200 with { status: \"ok\" }\n}";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.setup_test_effects();
+        interp.interpret(&program).unwrap();
+
+        let mut req_fields = std::collections::HashMap::new();
+        req_fields.insert("method".to_string(), Value::String("GET".to_string()));
+        req_fields.insert("path".to_string(), Value::String("/health".to_string()));
+        let request = Value::Struct { type_name: "Request".to_string(), fields: req_fields };
+
+        let response = interp.execute_route(&interp.routes[0].clone(), request).unwrap();
+        if let Value::Struct { fields, .. } = &response {
+            assert_eq!(fields.get("status"), Some(&Value::Int(200)));
+        } else { panic!("Expected Response"); }
+    }
+
+    #[test]
+    fn eval_on_success_handles_ok() {
+        let input = r#"intent "wrap value"
+fn wrap(x: Int) -> Int or Nothing {
+  x
+}
+wrap(42)
+  | on success: respond 200 with .
+  | on Nothing: respond 404 with nothing"#;
+        let result = eval(input);
+        if let Value::Struct { fields, .. } = &result {
+            assert_eq!(fields.get("status"), Some(&Value::Int(200)));
+        } else { panic!("Expected Response, got {:?}", result); }
     }
 }

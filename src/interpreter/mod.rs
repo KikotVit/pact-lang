@@ -7,5 +7,5 @@ pub mod value;
 
 pub use environment::Environment;
 pub use errors::RuntimeError;
-pub use interpreter::{Interpreter, TestResult};
+pub use interpreter::{Interpreter, StoredRoute, TestResult};
 pub use value::Value;
