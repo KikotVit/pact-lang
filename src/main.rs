@@ -45,6 +45,7 @@ fn main() {
         };
 
         let mut interp = Interpreter::new(&source);
+        interp.set_base_dir(filename);
         interp.setup_test_effects();
         let results = interp.run_tests(&program);
 
@@ -98,6 +99,7 @@ fn main() {
         };
 
         let mut interp = Interpreter::new(&source);
+        interp.set_base_dir(filename);
         interp.setup_test_effects();  // provide effects for now
         match interp.interpret(&program) {
             Ok(value) => {

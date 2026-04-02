@@ -715,6 +715,11 @@ impl Parser {
         let mut path = Vec::new();
         path.push(self.expect_identifier()?);
         while self.eat(&TokenKind::Dot) {
+            // Allow `*` as the last path component for wildcard imports
+            if self.eat(&TokenKind::Star) {
+                path.push("*".to_string());
+                break;
+            }
             path.push(self.expect_identifier()?);
         }
         Ok(Statement::Use { path })

@@ -43,6 +43,11 @@ impl Environment {
         }
     }
 
+    /// Return all bindings in the current scope (not parent).
+    pub fn all_bindings(&self) -> Vec<(String, Value)> {
+        self.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    }
+
     pub fn assign(&mut self, name: &str, value: Value) -> Result<(), String> {
         if self.values.contains_key(name) {
             if self.mutables.contains(name) {

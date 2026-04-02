@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::parser::ast::{BinaryOp, Expr, MatchArm, Pattern, PipelineStep, Program, Statement, StringExpr, StringPart, StructField, TakeKind, UnaryOp};
 use super::environment::Environment;
@@ -20,6 +21,8 @@ pub struct Interpreter {
     pub rng_counter: u64,
     /// Storage for return value when propagating returns through expressions
     pending_return: Option<Value>,
+    pub base_dir: Option<PathBuf>,
+    pub module_cache: HashMap<PathBuf, Environment>,
 }
 
 impl Interpreter {
@@ -32,6 +35,8 @@ impl Interpreter {
             rng_seed: None,
             rng_counter: 0,
             pending_return: None,
+            base_dir: None,
+            module_cache: HashMap::new(),
         }
     }
 
@@ -82,7 +87,10 @@ impl Interpreter {
                 Ok(StmtResult::Value(func))
             }
             Statement::TypeDecl(_) => Ok(StmtResult::Value(Value::Nothing)),
-            Statement::Use { .. } => Ok(StmtResult::Value(Value::Nothing)),
+            Statement::Use { path } => {
+                self.eval_use(path, env)?;
+                Ok(StmtResult::Value(Value::Nothing))
+            }
             Statement::Return { value, condition } => {
                 // If there's a condition, evaluate it — skip return if falsy
                 if let Some(cond_expr) = condition {
@@ -1081,6 +1089,98 @@ impl Interpreter {
         }
     }
 
+    // --- Module imports ---
+
+    /// Set the base directory for resolving `use` imports.
+    /// Extracts the parent directory from the given file path.
+    pub fn set_base_dir(&mut self, path: &str) {
+        let p = PathBuf::from(path);
+        if let Some(parent) = p.parent() {
+            self.base_dir = Some(parent.to_path_buf());
+        }
+    }
+
+    /// Evaluate a `use` import statement.
+    fn eval_use(&mut self, path: &[String], env: &mut Environment) -> Result<(), RuntimeError> {
+        if path.is_empty() {
+            return Err(self.error("Empty use path"));
+        }
+
+        // Last element is the symbol name
+        let symbol_name = &path[path.len() - 1];
+
+        // Rest is the file path: ["models", "user"] -> "models/user.pact"
+        let file_parts = &path[..path.len() - 1];
+
+        if file_parts.is_empty() {
+            // Single-part path like `use User` -- just a symbol from current scope, skip
+            return Ok(());
+        }
+
+        let mut file_path = self.base_dir.clone().unwrap_or_default();
+        for part in file_parts {
+            file_path.push(part);
+        }
+        file_path.set_extension("pact");
+
+        // Check cache
+        let module_env = if let Some(cached) = self.module_cache.get(&file_path) {
+            cached.clone()
+        } else {
+            // Read, lex, parse, eval the module file
+            let source = std::fs::read_to_string(&file_path).map_err(|e| {
+                let mut err = self.error(
+                    &format!("Cannot import '{}': {}", file_path.display(), e),
+                );
+                err.hint = Some(format!("File path resolved from: use {}", path.join(".")));
+                err
+            })?;
+
+            let mut lexer = crate::lexer::Lexer::new(&source);
+            let tokens = lexer.tokenize().map_err(|e| {
+                self.error(&format!("Lex error in '{}': {}", file_path.display(), e))
+            })?;
+
+            let mut parser = crate::parser::Parser::new(tokens, &source);
+            let program = parser.parse().map_err(|errors| {
+                self.error(&format!("Parse error in '{}': {}", file_path.display(), errors[0]))
+            })?;
+
+            // Eval the module in a fresh environment
+            let old_source = self.source.clone();
+            self.source = source;
+            let mut module_env = Environment::new();
+            for stmt in &program.statements {
+                self.eval_statement(stmt, &mut module_env)?;
+            }
+            self.source = old_source;
+
+            // Cache
+            self.module_cache.insert(file_path.clone(), module_env.clone());
+            module_env
+        };
+
+        // Wildcard import: import all symbols from the module
+        if symbol_name == "*" {
+            for (name, value) in module_env.all_bindings() {
+                env.bind(name.clone(), value.clone(), false);
+                self.global.bind(name, value, false);
+            }
+            return Ok(());
+        }
+
+        // Extract the symbol
+        if let Some(value) = module_env.lookup(symbol_name) {
+            env.bind(symbol_name.clone(), value.clone(), false);
+            self.global.bind(symbol_name.clone(), value.clone(), false);
+            Ok(())
+        } else {
+            Err(self.error(
+                &format!("Symbol '{}' not found in module '{}'", symbol_name, file_path.display()),
+            ))
+        }
+    }
+
     // --- Test runner ---
 
     /// Run all test blocks in the program and return results.
@@ -1828,5 +1928,96 @@ test "add works" {
     fn eval_using_statement() {
         let input = "using x = 42";
         assert_eq!(eval(input), Value::Nothing);
+    }
+
+    // --- Use import tests ---
+
+    #[test]
+    fn eval_use_import() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_imports");
+        let _ = fs::create_dir_all(dir.join("math"));
+        fs::write(
+            dir.join("math/ops.pact"),
+            "fn add(a: Int, b: Int) -> Int {\n  a + b\n}\n",
+        )
+        .unwrap();
+
+        let input = "use math.ops.add\nadd(1, 2)";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let result = interp.interpret(&program).unwrap();
+        assert_eq!(result, Value::Int(3));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn eval_use_wildcard_import() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_wildcard");
+        let _ = fs::create_dir_all(dir.join("utils"));
+        fs::write(
+            dir.join("utils/math.pact"),
+            "fn add(a: Int, b: Int) -> Int { a + b }\nfn mul(a: Int, b: Int) -> Int { a * b }\n",
+        )
+        .unwrap();
+
+        let input = "use utils.math.*\nadd(2, 3)";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let result = interp.interpret(&program).unwrap();
+        assert_eq!(result, Value::Int(5));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn eval_use_import_not_found() {
+        let input = "use nonexistent.module.Foo";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(std::env::temp_dir());
+        let err = interp.interpret(&program).unwrap_err();
+        assert!(err.message.contains("Cannot import"));
+    }
+
+    #[test]
+    fn eval_use_caches_module() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_cache");
+        let _ = fs::create_dir_all(dir.join("lib"));
+        fs::write(
+            dir.join("lib/counter.pact"),
+            "fn get_value() -> Int { 42 }\n",
+        )
+        .unwrap();
+
+        let input = "use lib.counter.get_value\nget_value()";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let result = interp.interpret(&program).unwrap();
+        assert_eq!(result, Value::Int(42));
+        assert_eq!(interp.module_cache.len(), 1);
+
+        let _ = fs::remove_dir_all(dir);
     }
 }
