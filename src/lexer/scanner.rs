@@ -102,8 +102,22 @@ impl Lexer {
                 // Collapse consecutive newlines
                 while !self.is_at_end() && self.current() == '\n' {
                     self.advance();
-                    // Also skip whitespace between newlines
                     self.skip_whitespace_except_newline();
+                }
+
+                // Rule 3 again after collapse: check if next non-whitespace is `|`
+                if !self.is_at_end() {
+                    let mut peek_pos = self.pos;
+                    while peek_pos < self.source.len() {
+                        let c = self.source[peek_pos];
+                        if c == '|' {
+                            return self.next_token();
+                        } else if c == ' ' || c == '\t' || c == '\r' {
+                            peek_pos += 1;
+                        } else {
+                            break;
+                        }
+                    }
                 }
 
                 Ok(token)
@@ -424,6 +438,9 @@ impl Lexer {
 
     fn read_string_content(&mut self) -> Result<Token, LexerError> {
         let mut fragment = String::new();
+        let frag_start_line = self.line;
+        let frag_start_col = self.column;
+        let frag_start_offset = self.pos;
 
         loop {
             if self.is_at_end() {
@@ -436,10 +453,15 @@ impl Lexer {
                 '"' => {
                     // End of string
                     if !fragment.is_empty() {
-                        let frag_token = self.make_token(
-                            TokenKind::StringFragment(fragment),
-                            0,
-                        );
+                        let frag_token = Token {
+                            kind: TokenKind::StringFragment(fragment),
+                            span: Span {
+                                line: frag_start_line,
+                                column: frag_start_col,
+                                offset: frag_start_offset,
+                                length: self.pos - frag_start_offset,
+                            },
+                        };
                         self.push_token(frag_token);
                     }
                     let end_token = self.make_token(TokenKind::StringEnd, 1);
@@ -455,10 +477,15 @@ impl Lexer {
                     } else {
                         // Interpolation start
                         if !fragment.is_empty() {
-                            let frag_token = self.make_token(
-                                TokenKind::StringFragment(fragment),
-                                0,
-                            );
+                            let frag_token = Token {
+                                kind: TokenKind::StringFragment(fragment),
+                                span: Span {
+                                    line: frag_start_line,
+                                    column: frag_start_col,
+                                    offset: frag_start_offset,
+                                    length: self.pos - frag_start_offset,
+                                },
+                            };
                             self.push_token(frag_token);
                         }
                         let interp_start = self.make_token(TokenKind::InterpolationStart, 1);
@@ -561,6 +588,9 @@ impl Lexer {
 
     fn read_multiline_string(&mut self) -> Result<Token, LexerError> {
         let mut fragment = String::new();
+        let mut frag_start_line = self.line;
+        let mut frag_start_col = self.column;
+        let mut frag_start_offset = self.pos;
 
         loop {
             if self.is_at_end() {
@@ -575,10 +605,15 @@ impl Lexer {
                     if self.peek() == Some('"') && self.peek_at(2) == Some('"') {
                         // End of multiline string
                         if !fragment.is_empty() {
-                            let frag_token = self.make_token(
-                                TokenKind::StringFragment(fragment),
-                                0,
-                            );
+                            let frag_token = Token {
+                                kind: TokenKind::StringFragment(fragment),
+                                span: Span {
+                                    line: frag_start_line,
+                                    column: frag_start_col,
+                                    offset: frag_start_offset,
+                                    length: self.pos - frag_start_offset,
+                                },
+                            };
                             self.push_token(frag_token);
                         }
                         let end_token = self.make_token(TokenKind::StringEnd, 3);
@@ -601,10 +636,15 @@ impl Lexer {
                     } else {
                         // Interpolation start
                         if !fragment.is_empty() {
-                            let frag_token = self.make_token(
-                                TokenKind::StringFragment(fragment),
-                                0,
-                            );
+                            let frag_token = Token {
+                                kind: TokenKind::StringFragment(fragment),
+                                span: Span {
+                                    line: frag_start_line,
+                                    column: frag_start_col,
+                                    offset: frag_start_offset,
+                                    length: self.pos - frag_start_offset,
+                                },
+                            };
                             self.push_token(frag_token);
                             fragment = String::new();
                         }
@@ -612,9 +652,10 @@ impl Lexer {
                         self.advance(); // consume '{'
                         self.push_token(interp_start);
                         self.read_interpolation()?;
-                        // Continue reading multiline string content
-                        // (recursive call not ideal but reuse pattern from task spec)
-                        // Instead, just continue the loop
+                        // Reset fragment tracking for content after interpolation
+                        frag_start_line = self.line;
+                        frag_start_col = self.column;
+                        frag_start_offset = self.pos;
                     }
                 }
                 '}' => {
@@ -1557,5 +1598,30 @@ mod tests {
                 TokenKind::Eof,
             ]
         );
+    }
+
+    #[test]
+    fn newline_suppressed_before_pipe_across_blank_lines() {
+        // Blank lines between expression and `|` should still suppress newline
+        assert_eq!(
+            tokenize("users\n\n  | filter"),
+            vec![
+                TokenKind::Identifier("users".to_string()),
+                TokenKind::Pipe,
+                TokenKind::Identifier("filter".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn string_fragment_span_is_correct() {
+        let mut lexer = Lexer::new(r#""hello""#);
+        let tokens = lexer.tokenize().unwrap();
+        // tokens: StringStart, StringFragment("hello"), StringEnd, Eof
+        let frag = &tokens[1];
+        assert!(matches!(&frag.kind, TokenKind::StringFragment(s) if s == "hello"));
+        assert_eq!(frag.span.offset, 1); // starts after opening "
+        assert_eq!(frag.span.length, 5); // "hello" is 5 chars
     }
 }
