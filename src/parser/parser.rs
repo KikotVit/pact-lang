@@ -453,10 +453,10 @@ impl Parser {
                 self.parse_string_expr()
             }
             TokenKind::If => {
-                self.fail("If not yet implemented", None)
+                self.parse_if_expr()
             }
             TokenKind::Match => {
-                self.fail("Match not yet implemented", None)
+                self.parse_match_expr()
             }
             TokenKind::Ensure => {
                 self.advance(); // consume 'ensure'
@@ -467,6 +467,87 @@ impl Parser {
                 self.fail("Expected expression", None)
             }
         }
+    }
+
+    fn parse_if_expr(&mut self) -> Result<Expr, ParseError> {
+        self.advance(); // consume `if`
+        let condition = self.parse_expression()?;
+        self.expect(&TokenKind::LBrace)?;
+        let then_body = self.parse_block_body()?;
+        self.expect(&TokenKind::RBrace)?;
+        let else_body = if self.eat(&TokenKind::Else) {
+            self.expect(&TokenKind::LBrace)?;
+            let body = self.parse_block_body()?;
+            self.expect(&TokenKind::RBrace)?;
+            Some(body)
+        } else {
+            None
+        };
+        Ok(Expr::If { condition: Box::new(condition), then_body, else_body })
+    }
+
+    fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
+        self.advance(); // consume `match`
+        let subject = self.parse_expression()?;
+        self.expect(&TokenKind::LBrace)?;
+        self.skip_newlines();
+        let mut arms = Vec::new();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let pattern = self.parse_pattern()?;
+            self.expect(&TokenKind::FatArrow)?;
+            let body = self.parse_expression()?;
+            arms.push(MatchArm { pattern, body });
+            self.eat(&TokenKind::Comma);
+            self.skip_newlines();
+        }
+        self.expect(&TokenKind::RBrace)?;
+        Ok(Expr::Match { subject: Box::new(subject), arms })
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        match self.current_kind().clone() {
+            TokenKind::Underscore => {
+                self.advance();
+                Ok(Pattern::Wildcard)
+            }
+            TokenKind::Identifier(name) => {
+                self.advance();
+                Ok(Pattern::Identifier(name))
+            }
+            TokenKind::IntLiteral(n) => {
+                self.advance();
+                Ok(Pattern::Literal(Expr::IntLiteral(n)))
+            }
+            TokenKind::BoolLiteral(b) => {
+                self.advance();
+                Ok(Pattern::Literal(Expr::BoolLiteral(b)))
+            }
+            TokenKind::StringStart | TokenKind::RawStringLiteral(_) => {
+                let expr = self.parse_string_expr()?;
+                Ok(Pattern::Literal(expr))
+            }
+            _ => self.fail(
+                &format!("Expected pattern, found {:?}", self.current_kind()),
+                Some("Patterns can be identifiers (Admin), _ (wildcard), or literals (42, true)"),
+            ),
+        }
+    }
+
+    fn parse_block_body(&mut self) -> Result<Vec<Statement>, ParseError> {
+        self.skip_newlines();
+        let mut stmts = Vec::new();
+        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+            let stmt = self.parse_statement()?;
+            stmts.push(stmt);
+            self.skip_newlines();
+        }
+        Ok(stmts)
+    }
+
+    fn parse_statement(&mut self) -> Result<Statement, ParseError> {
+        let expr = self.parse_expression()?;
+        self.skip_newlines();
+        Ok(Statement::Expression(expr))
     }
 
     fn parse_string_expr(&mut self) -> Result<Expr, ParseError> {
@@ -888,5 +969,46 @@ mod tests {
             assert!(matches!(steps[0], PipelineStep::Flatten));
             assert!(matches!(steps[1], PipelineStep::Unique));
         } else { panic!("Expected Pipeline"); }
+    }
+
+    // --- Control flow tests ---
+
+    #[test]
+    fn parse_if_else() {
+        let expr = parse_expr("if age >= 18 {\n  true\n} else {\n  false\n}");
+        assert!(matches!(expr, Expr::If { .. }));
+        if let Expr::If { else_body, .. } = &expr {
+            assert!(else_body.is_some());
+        }
+    }
+
+    #[test]
+    fn parse_if_without_else() {
+        let expr = parse_expr("if x {\n  1\n}");
+        assert!(matches!(expr, Expr::If { .. }));
+        if let Expr::If { else_body, .. } = &expr {
+            assert!(else_body.is_none());
+        }
+    }
+
+    #[test]
+    fn parse_match_expression() {
+        let input = "match role {\n  Admin => true,\n  _ => false,\n}";
+        let expr = parse_expr(input);
+        assert!(matches!(expr, Expr::Match { .. }));
+        if let Expr::Match { arms, .. } = &expr {
+            assert_eq!(arms.len(), 2);
+            assert!(matches!(&arms[0].pattern, Pattern::Identifier(n) if n == "Admin"));
+            assert!(matches!(&arms[1].pattern, Pattern::Wildcard));
+        }
+    }
+
+    #[test]
+    fn parse_match_with_literals() {
+        let input = "match x {\n  42 => true,\n  _ => false,\n}";
+        let expr = parse_expr(input);
+        if let Expr::Match { arms, .. } = &expr {
+            assert!(matches!(&arms[0].pattern, Pattern::Literal(Expr::IntLiteral(42))));
+        } else { panic!("Expected Match"); }
     }
 }
