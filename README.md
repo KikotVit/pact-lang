@@ -50,6 +50,17 @@ PACT makes the logic the entire program:
 - **Errors as types** — `-> User or NotFound` in the signature, not hidden exceptions
 - **SQLite built in** — `db: "sqlite://data.db"` in the app declaration, tables auto-create from struct fields
 
+## Designed for AI agents
+
+PACT is built so that LLMs can read, write, and debug backend code with fewer iterations.
+
+- **Intent** tells the agent what a function does before it reads the code — no need to reverse-engineer purpose from implementation
+- **`needs db, time`** tells the agent what side effects a function has — no need to trace through the body to find hidden database calls
+- **`-> User or NotFound`** tells the agent every possible outcome — no undocumented exceptions to discover at runtime
+- **Error messages** include line numbers, source context, and hints — the agent fixes the issue in one attempt, not three
+
+Traditional languages hide intent in comments (which drift from code), hide effects in implementation details, and hide errors in exception hierarchies. PACT makes all three part of the language.
+
 ## A fuller example
 
 ```pact
@@ -64,20 +75,20 @@ type User {
 }
 
 intent "find user by ID"
-fn find_user(id: String) -> Struct or NotFound
+fn find_user(id: String) -> User or NotFound
   needs db
 {
   db.find("users", { id: id })
 }
 
 intent "create a new user with default Viewer role"
-fn create_user(data: Struct) -> Struct or BadRequest
+fn create_user(data: NewUser) -> User or BadRequest
   needs db, time, rng
 {
-  let existing: Struct = find_by_email(data.email)
+  let existing: User = find_by_email(data.email)
   return BadRequest { message: "Email already taken" } if existing != nothing
 
-  let user: Struct = {
+  let user: User = {
     id: rng.uuid(),
     name: data.name,
     email: data.email,
@@ -137,7 +148,7 @@ test "create_user assigns Viewer role" {
   using rng = rng.deterministic(42)
   using db = db.memory()
 
-  let user: Struct = create_user({
+  let user: User = create_user({
     name: "Alice",
     email: "alice@example.com",
     age: 30,
@@ -181,24 +192,13 @@ pact test users.pact
 | `log` | `info()`, `warn()`, `error()` — structured logging |
 | `env` | `get(key)`, `require(key)` — environment variables |
 
-## Designed for AI agents
-
-PACT is built so that LLMs can read, write, and debug backend code with fewer iterations.
-
-- **Intent** tells the agent what a function does before it reads the code — no need to reverse-engineer purpose from implementation
-- **`needs db, time`** tells the agent what side effects a function has — no need to trace through the body to find hidden database calls
-- **`-> User or NotFound`** tells the agent every possible outcome — no undocumented exceptions to discover at runtime
-- **Error messages** include line numbers, source context, and hints — the agent fixes the issue in one attempt, not three
-
-Traditional languages hide intent in comments (which drift from code), hide effects in implementation details, and hide errors in exception hierarchies. PACT makes all three part of the language.
-
 ## Status
 
 PACT is v0.3. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
 What exists: lexer, parser, tree-walking interpreter, HTTP server, SQLite storage, CLI (`pact run`, `pact test`), 287 tests.
 
-What's next: type checker, validation constraints, `pact docs` built-in reference, LSP for editor support.
+What's next: type checker, validation constraints, `pact docs` built-in reference, `pact mcp` — MCP server for AI coding agents, LSP for editor support.
 
 ## License
 
