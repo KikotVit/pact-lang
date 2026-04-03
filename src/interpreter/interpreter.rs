@@ -228,7 +228,7 @@ impl Interpreter {
                 } else if let Some(val) = self.global.lookup(name) {
                     Ok(val.clone())
                 } else {
-                    let known_effects = ["db", "auth", "log", "time", "rng"];
+                    let known_effects = ["db", "auth", "log", "time", "rng", "env"];
                     if known_effects.contains(&name.as_str()) {
                         let mut err = self
                             .error(&format!("Effect '{}' is not available in this scope", name));
@@ -1050,6 +1050,27 @@ impl Interpreter {
                 // For testing: returns the provided user struct as-is
                 Ok(args.into_iter().next().unwrap_or(Value::Nothing))
             }
+            "env.get" => match args.first() {
+                Some(Value::String(key)) => match std::env::var(key) {
+                    Ok(val) => Ok(Value::String(val)),
+                    Err(_) => Ok(Value::Nothing),
+                },
+                _ => Err(self.error("env.get expects a String argument")),
+            },
+            "env.require" => match args.first() {
+                Some(Value::String(key)) => match std::env::var(key) {
+                    Ok(val) => Ok(Value::String(val)),
+                    Err(_) => {
+                        let mut err = self.error(&format!(
+                            "Required environment variable '{}' is not set",
+                            key
+                        ));
+                        err.hint = Some(format!("Set it with: export {}=value", key));
+                        Err(err)
+                    }
+                },
+                _ => Err(self.error("env.require expects a String argument")),
+            },
             _ => Err(self.error(&format!("Unknown builtin '{}'", name))),
         }
     }
@@ -1370,6 +1391,29 @@ impl Interpreter {
             Value::Effect {
                 name: "auth".to_string(),
                 methods: auth_methods,
+            },
+            false,
+        );
+
+        // env effect
+        let mut env_methods = HashMap::new();
+        env_methods.insert(
+            "get".to_string(),
+            Value::BuiltinFn {
+                name: "env.get".to_string(),
+            },
+        );
+        env_methods.insert(
+            "require".to_string(),
+            Value::BuiltinFn {
+                name: "env.require".to_string(),
+            },
+        );
+        self.global.bind(
+            "env".to_string(),
+            Value::Effect {
+                name: "env".to_string(),
+                methods: env_methods,
             },
             false,
         );
@@ -1857,7 +1901,7 @@ impl Interpreter {
         route: &StoredRoute,
         request: Value,
     ) -> Result<Value, RuntimeError> {
-        let known_effects: Vec<String> = ["db", "auth", "log", "time", "rng"]
+        let known_effects: Vec<String> = ["db", "auth", "log", "time", "rng", "env"]
             .iter()
             .map(|s| s.to_string())
             .collect();
