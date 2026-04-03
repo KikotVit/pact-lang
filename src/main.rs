@@ -9,6 +9,11 @@ use pact::interpreter::{Interpreter, Value};
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
+        println!("pact {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     if args.len() < 2 {
         eprintln!("Usage: pact <file.pact> [--ast]");
         eprintln!("       pact run <file.pact>    Execute a .pact file");
