@@ -107,14 +107,18 @@ pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
                         Some(Value::Int(n)) => *n as i32,
                         _ => 200,
                     };
-                    // Handle redirects with Location header
+                    // Handle redirects (301, 302, 307, 308)
                     if matches!(status, 301 | 302 | 307 | 308) {
-                        if let Some(Value::String(loc)) = fields.get("location") {
+                        let location = fields.get("location").or_else(|| {
+                            fields.get("body").and_then(|b| {
+                                if let Value::Struct { fields: bf, .. } = b { bf.get("location") } else { None }
+                            })
+                        });
+                        if let Some(Value::String(loc)) = location {
                             make_redirect_response(status, loc)
                         } else {
                             let body = fields.get("body").unwrap_or(&Value::Nothing);
-                            let json_body =
-                                serde_json::to_string(&value_to_json(body)).unwrap_or_default();
+                            let json_body = serde_json::to_string(&value_to_json(body)).unwrap_or_default();
                             make_json_response(status, &json_body)
                         }
                     } else {
@@ -198,13 +202,15 @@ fn parse_query_string(url: &str) -> HashMap<String, String> {
 }
 
 fn make_redirect_response(status: i32, location: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    let data = Vec::new();
+    let body = format!(r#"{{"redirect":"{}"}}"#, location);
+    let data = body.as_bytes().to_vec();
     let location_header = Header::from_bytes("Location", location).unwrap();
+    let content_type = Header::from_bytes("Content-Type", "application/json").unwrap();
     Response::new(
         StatusCode(status as u16),
-        vec![location_header],
-        std::io::Cursor::new(data),
-        Some(0),
+        vec![location_header, content_type],
+        std::io::Cursor::new(data.clone()),
+        Some(data.len()),
         None,
     )
 }

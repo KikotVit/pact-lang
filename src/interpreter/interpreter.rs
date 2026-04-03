@@ -853,6 +853,7 @@ impl Interpreter {
             "db.query" => self.builtin_db_query(args),
             "time.now" => self.builtin_time_now(),
             "rng.uuid" => self.builtin_rng_uuid(),
+            "rng.hex" => self.builtin_rng_hex(args),
             "time.fixed" => {
                 if let Some(Value::String(dt)) = args.first() {
                     self.fixed_time = Some(dt.clone());
@@ -916,6 +917,23 @@ impl Interpreter {
         Ok(Value::String(format!("uuid-{}-{}", seed, self.rng_counter)))
     }
 
+    fn builtin_rng_hex(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let length = match args.first() {
+            Some(Value::Int(n)) => *n as usize,
+            _ => return Err(self.error("rng.hex expects 1 argument: length (Int)")),
+        };
+        self.rng_counter += 1;
+        let seed = self.rng_seed.unwrap_or(42);
+        // Simple hash-based hex generation from seed+counter
+        let mut value = seed.wrapping_mul(6364136223846793005).wrapping_add(self.rng_counter as u64);
+        let mut hex = String::with_capacity(length);
+        for _ in 0..length {
+            value = value.wrapping_mul(6364136223846793005).wrapping_add(1);
+            hex.push_str(&format!("{:x}", (value >> 32) & 0xf));
+        }
+        Ok(Value::String(hex))
+    }
+
     // --- Effect setup ---
 
     pub fn setup_test_effects(&mut self) {
@@ -932,9 +950,10 @@ impl Interpreter {
         time_methods.insert("fixed".to_string(), Value::BuiltinFn { name: "time.fixed".to_string() });
         self.global.bind("time".to_string(), Value::Effect { name: "time".to_string(), methods: time_methods }, false);
 
-        // rng effect with uuid and deterministic constructor
+        // rng effect with uuid, hex, and deterministic constructor
         let mut rng_methods = HashMap::new();
         rng_methods.insert("uuid".to_string(), Value::BuiltinFn { name: "rng.uuid".to_string() });
+        rng_methods.insert("hex".to_string(), Value::BuiltinFn { name: "rng.hex".to_string() });
         rng_methods.insert("deterministic".to_string(), Value::BuiltinFn { name: "rng.deterministic".to_string() });
         self.global.bind("rng".to_string(), Value::Effect { name: "rng".to_string(), methods: rng_methods }, false);
 
@@ -960,6 +979,7 @@ impl Interpreter {
     fn make_rng_effect(&self) -> Value {
         let mut methods = HashMap::new();
         methods.insert("uuid".to_string(), Value::BuiltinFn { name: "rng.uuid".to_string() });
+        methods.insert("hex".to_string(), Value::BuiltinFn { name: "rng.hex".to_string() });
         methods.insert("deterministic".to_string(), Value::BuiltinFn { name: "rng.deterministic".to_string() });
         Value::Effect { name: "rng".to_string(), methods }
     }
