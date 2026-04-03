@@ -1260,35 +1260,69 @@ impl Parser {
         self.expect(&TokenKind::LBrace)?;
         self.skip_newlines();
 
-        // Expect `port: <int>`
-        let key = self.expect_identifier()?;
-        if key != "port" {
-            return self.fail(
-                &format!("Expected 'port' in app declaration, found '{}'", key),
-                None,
-            );
-        }
-        self.expect(&TokenKind::Colon)?;
-        let port = match self.current_kind().clone() {
-            TokenKind::IntLiteral(n) => {
-                self.advance();
-                n as u16
-            }
-            _ => {
-                return self.fail(
-                    &format!("Expected integer for port, found {}", self.current_kind()),
-                    Some("Syntax: app Name { port: 8080 }"),
-                );
-            }
-        };
+        let mut port: Option<u16> = None;
+        let mut db_url: Option<String> = None;
 
-        // Eat optional comma
-        self.eat(&TokenKind::Comma);
-        self.skip_newlines();
+        while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
+            let key = self.expect_identifier()?;
+            self.expect(&TokenKind::Colon)?;
+
+            match key.as_str() {
+                "port" => {
+                    port = Some(match self.current_kind().clone() {
+                        TokenKind::IntLiteral(n) => {
+                            self.advance();
+                            n as u16
+                        }
+                        _ => {
+                            return self.fail(
+                                &format!("Expected integer for port, found {}", self.current_kind()),
+                                Some("Syntax: app Name { port: 8080 }"),
+                            );
+                        }
+                    });
+                }
+                "db" => {
+                    let expr = self.parse_string_expr().map_err(|_| {
+                        self.error(
+                            &format!("Expected string for db, found {}", self.current_kind()),
+                            Some("Syntax: app Name { port: 8080, db: \"sqlite://data.db\" }"),
+                        )
+                    })?;
+                    match expr {
+                        Expr::StringLiteral(StringExpr::Simple(s)) => {
+                            db_url = Some(s);
+                        }
+                        _ => {
+                            return self.fail(
+                                "db value must be a plain string (no interpolation)",
+                                Some("Syntax: app Name { port: 8080, db: \"sqlite://data.db\" }"),
+                            );
+                        }
+                    }
+                }
+                other => {
+                    return self.fail(
+                        &format!("Unknown app property '{}'", other),
+                        Some("Known properties: port, db"),
+                    );
+                }
+            }
+
+            self.eat(&TokenKind::Comma);
+            self.skip_newlines();
+        }
+
+        let port = port.ok_or_else(|| {
+            self.error(
+                "app declaration requires 'port'",
+                Some("Syntax: app Name { port: 8080 }"),
+            )
+        })?;
 
         self.expect(&TokenKind::RBrace)?;
 
-        Ok(Statement::App { name, port })
+        Ok(Statement::App { name, port, db_url })
     }
 
     fn parse_dot_shorthand(&mut self) -> Result<Expr, ParseError> {
@@ -2465,7 +2499,20 @@ route GET "/users/{id}" {
     fn parse_app() {
         let prog = parse_program("app UserService {\n  port: 8080,\n}");
         assert!(
-            matches!(&prog.statements[0], Statement::App { name, port } if name == "UserService" && *port == 8080)
+            matches!(&prog.statements[0], Statement::App { name, port, db_url } if name == "UserService" && *port == 8080 && db_url.is_none())
+        );
+    }
+
+    #[test]
+    fn parse_app_with_db() {
+        let input = "app UserService {\n  port: 8080,\n  db: \"sqlite://data.db\",\n}";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let prog = parser.parse().unwrap();
+        assert!(
+            matches!(&prog.statements[0], Statement::App { name, port, db_url }
+                if name == "UserService" && *port == 8080 && db_url.as_deref() == Some("sqlite://data.db"))
         );
     }
 }

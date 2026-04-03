@@ -38,7 +38,7 @@ pub struct Interpreter {
     pub module_cache: HashMap<PathBuf, Environment>,
     pub type_defs: HashMap<String, Vec<(String, bool)>>, // (field_name, is_optional)
     pub routes: Vec<StoredRoute>,
-    pub app_config: Option<(String, u16)>,
+    pub app_config: Option<(String, u16, Option<String>)>,
     /// Predetermined sequence for rng (testing)
     rng_sequence: Option<Vec<String>>,
     /// Effects blocked from global lookup (enforces `needs` declarations)
@@ -219,8 +219,8 @@ impl Interpreter {
                 });
                 Ok(StmtResult::Value(Value::Nothing))
             }
-            Statement::App { name, port } => {
-                self.app_config = Some((name.clone(), *port));
+            Statement::App { name, port, db_url } => {
+                self.app_config = Some((name.clone(), *port, db_url.clone()));
                 Ok(StmtResult::Value(Value::Nothing))
             }
         }

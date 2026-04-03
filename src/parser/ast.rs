@@ -50,6 +50,7 @@ pub enum Statement {
     App {
         name: String,
         port: u16,
+        db_url: Option<String>,
     },
 }
 

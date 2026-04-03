@@ -162,7 +162,7 @@ fn main() {
         interp.setup_test_effects(); // provide effects for now
         match interp.interpret(&program) {
             Ok(value) => {
-                if let Some((name, port)) = interp.app_config.clone() {
+                if let Some((name, port, _db_url)) = interp.app_config.clone() {
                     pact::interpreter::server::start_server(&mut interp, &name, port);
                 } else {
                     match value {
