@@ -168,6 +168,7 @@ fn main() {
                             eprintln!("{}", e);
                             process::exit(1);
                         }
+                        println!("Database: {} (WAL mode)", url);
                     }
                     pact::interpreter::server::start_server(&mut interp, &name, port);
                 } else {
