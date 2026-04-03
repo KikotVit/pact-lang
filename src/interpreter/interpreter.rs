@@ -942,6 +942,8 @@ impl Interpreter {
             "list" => Ok(Value::List(args)),
             "db.insert" => self.builtin_db_insert(args),
             "db.query" => self.builtin_db_query(args),
+            "db.update" => self.builtin_db_update(args),
+            "db.delete" => self.builtin_db_delete(args),
             "time.now" => self.builtin_time_now(),
             "rng.uuid" => self.builtin_rng_uuid(),
             "rng.hex" => self.builtin_rng_hex(args),
@@ -1004,6 +1006,69 @@ impl Interpreter {
         Ok(Value::List(items))
     }
 
+    fn builtin_db_update(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        if args.len() != 3 {
+            return Err(self.error("db.update expects 3 arguments: table name, id, new value"));
+        }
+        let table_name = match &args[0] {
+            Value::String(s) => s.clone(),
+            _ => return Err(self.error("db.update first argument must be a String table name")),
+        };
+        let id = match &args[1] {
+            Value::String(s) => s.clone(),
+            _ => return Err(self.error("db.update second argument must be a String id")),
+        };
+        let new_value = args[2].clone();
+        if let Some(items) = self.db_storage.get_mut(&table_name) {
+            for item in items.iter_mut() {
+                if let Value::Struct { fields, .. } = item {
+                    if fields.get("id") == Some(&Value::String(id.clone())) {
+                        *item = new_value.clone();
+                        return Ok(new_value);
+                    }
+                }
+            }
+        }
+        Ok(Value::Error {
+            variant: "NotFound".to_string(),
+            fields: None,
+        })
+    }
+
+    fn builtin_db_delete(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        if args.len() != 2 {
+            return Err(self.error("db.delete expects 2 arguments: table name, id"));
+        }
+        let table_name = match &args[0] {
+            Value::String(s) => s.clone(),
+            _ => return Err(self.error("db.delete first argument must be a String table name")),
+        };
+        let id = match &args[1] {
+            Value::String(s) => s.clone(),
+            _ => return Err(self.error("db.delete second argument must be a String id")),
+        };
+        if let Some(items) = self.db_storage.get_mut(&table_name) {
+            let len_before = items.len();
+            let mut removed = Value::Nothing;
+            items.retain(|item| {
+                if let Value::Struct { fields, .. } = item {
+                    if fields.get("id") == Some(&Value::String(id.clone())) {
+                        removed = item.clone();
+                        return false;
+                    }
+                }
+                true
+            });
+            if items.len() < len_before {
+                return Ok(removed);
+            }
+        }
+        Ok(Value::Error {
+            variant: "NotFound".to_string(),
+            fields: None,
+        })
+    }
+
     fn builtin_time_now(&self) -> Result<Value, RuntimeError> {
         let time_str = self
             .fixed_time
@@ -1052,6 +1117,18 @@ impl Interpreter {
             "query".to_string(),
             Value::BuiltinFn {
                 name: "db.query".to_string(),
+            },
+        );
+        db_methods.insert(
+            "update".to_string(),
+            Value::BuiltinFn {
+                name: "db.update".to_string(),
+            },
+        );
+        db_methods.insert(
+            "delete".to_string(),
+            Value::BuiltinFn {
+                name: "db.delete".to_string(),
             },
         );
         db_methods.insert(
@@ -1152,6 +1229,18 @@ impl Interpreter {
             "query".to_string(),
             Value::BuiltinFn {
                 name: "db.query".to_string(),
+            },
+        );
+        methods.insert(
+            "update".to_string(),
+            Value::BuiltinFn {
+                name: "db.update".to_string(),
+            },
+        );
+        methods.insert(
+            "delete".to_string(),
+            Value::BuiltinFn {
+                name: "db.delete".to_string(),
             },
         );
         methods.insert(
