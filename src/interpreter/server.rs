@@ -107,10 +107,22 @@ pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
                         Some(Value::Int(n)) => *n as i32,
                         _ => 200,
                     };
-                    let body = fields.get("body").unwrap_or(&Value::Nothing);
-                    let json_body =
-                        serde_json::to_string(&value_to_json(body)).unwrap_or_default();
-                    make_json_response(status, &json_body)
+                    // Handle redirects with Location header
+                    if matches!(status, 301 | 302 | 307 | 308) {
+                        if let Some(Value::String(loc)) = fields.get("location") {
+                            make_redirect_response(status, loc)
+                        } else {
+                            let body = fields.get("body").unwrap_or(&Value::Nothing);
+                            let json_body =
+                                serde_json::to_string(&value_to_json(body)).unwrap_or_default();
+                            make_json_response(status, &json_body)
+                        }
+                    } else {
+                        let body = fields.get("body").unwrap_or(&Value::Nothing);
+                        let json_body =
+                            serde_json::to_string(&value_to_json(body)).unwrap_or_default();
+                        make_json_response(status, &json_body)
+                    }
                 }
                 Ok(other) => {
                     let json_body =
@@ -183,6 +195,18 @@ fn parse_query_string(url: &str) -> HashMap<String, String> {
         }
     }
     params
+}
+
+fn make_redirect_response(status: i32, location: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    let data = Vec::new();
+    let location_header = Header::from_bytes("Location", location).unwrap();
+    Response::new(
+        StatusCode(status as u16),
+        vec![location_header],
+        std::io::Cursor::new(data),
+        Some(0),
+        None,
+    )
 }
 
 fn make_json_response(status: i32, body: &str) -> Response<std::io::Cursor<Vec<u8>>> {

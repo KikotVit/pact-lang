@@ -454,8 +454,18 @@ impl Interpreter {
                 let status_val = self.eval_expr(status, env)?;
                 let body_val = self.eval_expr(body, env)?;
                 let mut fields = HashMap::new();
-                fields.insert("status".to_string(), status_val);
-                fields.insert("body".to_string(), body_val);
+                fields.insert("status".to_string(), status_val.clone());
+                fields.insert("body".to_string(), body_val.clone());
+                // For redirects, extract location to top level
+                if let Value::Int(code) = &status_val {
+                    if matches!(code, 301 | 302 | 307 | 308) {
+                        if let Value::Struct { fields: body_fields, .. } = &body_val {
+                            if let Some(loc) = body_fields.get("location") {
+                                fields.insert("location".to_string(), loc.clone());
+                            }
+                        }
+                    }
+                }
                 Ok(Value::Struct { type_name: "Response".to_string(), fields })
             }
         }
@@ -710,13 +720,25 @@ impl Interpreter {
                     child_env.bind("_it".to_string(), item.clone(), false);
                     let val = self.eval_expr(predicate, &mut child_env)?;
                     if val.is_truthy() {
-                        return Ok(Value::Ok(Box::new(item)));
+                        return Ok(item);
                     }
                 }
                 Ok(Value::Nothing)
             }
             PipelineStep::ExpectOne { error } => {
-                let items = self.require_list(&current, "expect one")?;
+                let items = match &current {
+                    Value::List(items) => items.clone(),
+                    _ => {
+                        let mut err = self.error(&format!(
+                            "Pipeline step 'expect one' requires a List, but got {}. Hint: use 'filter where' instead of 'find first where' before 'expect one'",
+                            current.type_name()
+                        ));
+                        err.hint = Some(
+                            "'find first where' returns a single value, not a List. Use 'filter where' to keep a List".to_string()
+                        );
+                        return Err(err);
+                    }
+                };
                 if items.len() == 1 {
                     Ok(Value::Ok(Box::new(items.into_iter().next().unwrap())))
                 } else {

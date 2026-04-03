@@ -698,7 +698,7 @@ impl Parser {
             TokenKind::Fn => {
                 return Err(self.error(
                     "Missing 'intent' block before function declaration",
-                    Some("every fn requires intent \"description\" on the line above"),
+                    Some("Write: intent \"description\" on the line before fn"),
                 ));
             }
             TokenKind::Intent => {
@@ -824,7 +824,13 @@ impl Parser {
 
         // Body
         self.push_block("function");
-        self.expect(&TokenKind::LBrace)?;
+        if !self.at(&TokenKind::LBrace) {
+            return self.fail(
+                "Function body must start with '{'",
+                Some(&format!("Found {:?} instead of opening brace", self.current_kind())),
+            );
+        }
+        self.advance(); // consume `{`
         let body = self.parse_block_body()?;
         self.expect_closing_brace()?;
 
@@ -1131,6 +1137,12 @@ impl Parser {
 
     fn parse_app(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // consume `app`
+        if self.at(&TokenKind::LBrace) {
+            return Err(self.error(
+                "app requires a name, e.g.: app MyService { port: 8080 }",
+                None,
+            ));
+        }
         let name = self.expect_identifier()?;
         self.expect(&TokenKind::LBrace)?;
         self.skip_newlines();
