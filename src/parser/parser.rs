@@ -47,13 +47,6 @@ impl Parser {
         &self.tokens[self.pos].kind
     }
 
-    fn peek(&self) -> &TokenKind {
-        if self.pos + 1 < self.tokens.len() {
-            &self.tokens[self.pos + 1].kind
-        } else {
-            &TokenKind::Eof
-        }
-    }
 
     fn peek_at(&self, offset: usize) -> &TokenKind {
         let idx = self.pos + offset;
