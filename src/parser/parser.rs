@@ -760,9 +760,18 @@ impl Parser {
                 self.advance(); // consume intent
                 let intent = self.parse_intent_string()?;
                 self.skip_newlines();
-                self.parse_fn_decl(Some(intent))?
+                if self.at(&TokenKind::Route) {
+                    self.parse_route_with_intent(intent)?
+                } else {
+                    self.parse_fn_decl(Some(intent))?
+                }
             }
-            TokenKind::Route => self.parse_route()?,
+            TokenKind::Route => {
+                return Err(self.error(
+                    "Missing 'intent' block before route declaration",
+                    Some("Write: intent \"description\" on the line before route"),
+                ));
+            }
             TokenKind::App => self.parse_app()?,
             TokenKind::Type => self.parse_type_decl_stmt()?,
             TokenKind::Test => self.parse_test_block()?,
@@ -1202,23 +1211,12 @@ impl Parser {
         }
     }
 
-    fn parse_route(&mut self) -> Result<Statement, ParseError> {
+    fn parse_route_with_intent(&mut self, intent: String) -> Result<Statement, ParseError> {
         self.advance(); // consume `route`
         let method = self.expect_identifier()?;
         let path = self.parse_route_path()?;
         self.push_block("route");
         self.expect(&TokenKind::LBrace)?;
-        self.skip_newlines();
-
-        // REQUIRED: intent
-        if !self.at(&TokenKind::Intent) {
-            return Err(self.error(
-                "Missing 'intent' block in route declaration",
-                Some("every route requires intent \"description\" as the first line"),
-            ));
-        }
-        self.advance(); // consume `intent`
-        let intent = self.parse_intent_string()?;
         self.skip_newlines();
 
         // Optional: needs
@@ -2380,14 +2378,14 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
     #[test]
     fn parse_simple_route() {
         let input =
-            "route GET \"/health\" {\n  intent \"health check\"\n  respond 200 with nothing\n}";
+            "intent \"health check\"\nroute GET \"/health\" {\n  respond 200 with nothing\n}";
         let prog = parse_program(input);
         assert!(matches!(&prog.statements[0], Statement::Route { method, .. } if method == "GET"));
     }
 
     #[test]
     fn parse_route_with_needs() {
-        let input = "route GET \"/users\" {\n  intent \"list users\"\n  needs db, auth\n  respond 200 with nothing\n}";
+        let input = "intent \"list users\"\nroute GET \"/users\" {\n  needs db, auth\n  respond 200 with nothing\n}";
         let prog = parse_program(input);
         if let Statement::Route { effects, .. } = &prog.statements[0] {
             assert_eq!(effects, &["db", "auth"]);
@@ -2448,8 +2446,8 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
 
     #[test]
     fn parse_route_with_pipeline() {
-        let input = r#"route GET "/users/{id}" {
-  intent "get user by ID"
+        let input = r#"intent "get user by ID"
+route GET "/users/{id}" {
   needs db
   find_user(request.params.id)
     | on success: respond 200 with .

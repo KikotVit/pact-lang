@@ -15,10 +15,15 @@ fn main() {
     }
 
     if args.len() < 2 || (args.len() == 2 && (args[1] == "--help" || args[1] == "-h")) {
-        println!("pact {} — The PACT programming language", env!("CARGO_PKG_VERSION"));
+        println!(
+            "pact {} — The PACT programming language",
+            env!("CARGO_PKG_VERSION")
+        );
         println!();
         println!("Usage:");
-        println!("  pact run <file.pact>       Run a .pact program (starts HTTP server if app is declared)");
+        println!(
+            "  pact run <file.pact>       Run a .pact program (starts HTTP server if app is declared)"
+        );
         println!("  pact test <file.pact>      Run test blocks");
         println!("  pact <file.pact> --ast     Print the AST");
         println!("  pact <file.pact>           Print the token stream");
@@ -26,8 +31,8 @@ fn main() {
         println!("Quick start:");
         println!("  1. Create a file (e.g. hello.pact):");
         println!();
+        println!("     intent \"Say hello\"");
         println!("     route GET \"/hello\" {{");
-        println!("       intent \"Say hello\"");
         println!("       respond 200 with {{ message: \"Hello from PACT\" }}");
         println!("     }}");
         println!("     app Hello {{ port: 8080 }}");
@@ -42,12 +47,20 @@ fn main() {
         println!("  Variables:   let name: Type = value");
         println!("  Functions:   intent \"desc\" followed by fn name(args) -> Type {{ body }}");
         println!("  Pipelines:   data | filter where .x > 0 | map to .name | take first 5");
-        println!("  Routes:      route GET \"/path/{{id}}\" {{ intent \"desc\" ... respond 200 with expr }}");
-        println!("  Errors:      fn foo() -> T or NotFound  ...  | on NotFound: respond 404 with ...");
+        println!(
+            "  Routes:      intent \"desc\" then route GET \"/path/{{id}}\" {{ respond 200 with expr }}"
+        );
+        println!(
+            "  Errors:      fn foo() -> T or NotFound  ...  | on NotFound: respond 404 with ..."
+        );
         println!("  Effects:     needs db, rng, time");
         println!("  Builtins:    print(), list(), db.insert(), db.query(), rng.hex(), time.now()");
-        println!("  Str methods: .length() .contains() .to_upper() .to_lower() .trim() .split() .replace()");
-        println!("  List methods: .length() .contains() .push() .get() .join() .is_empty() .first() .last()");
+        println!(
+            "  Str methods: .length() .contains() .to_upper() .to_lower() .trim() .split() .replace()"
+        );
+        println!(
+            "  List methods: .length() .contains() .push() .get() .join() .is_empty() .first() .last()"
+        );
         if args.len() < 2 {
             process::exit(1);
         }

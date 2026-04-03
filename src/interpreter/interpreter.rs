@@ -2503,7 +2503,7 @@ test "add works" {
 
     #[test]
     fn eval_route_stored() {
-        let input = "route GET \"/health\" {\n  intent \"health check\"\n  respond 200 with { status: \"ok\" }\n}";
+        let input = "intent \"health check\"\nroute GET \"/health\" {\n  respond 200 with { status: \"ok\" }\n}";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens, input);
@@ -2516,7 +2516,7 @@ test "add works" {
 
     #[test]
     fn eval_route_execution() {
-        let input = "route GET \"/health\" {\n  intent \"health check\"\n  respond 200 with { status: \"ok\" }\n}";
+        let input = "intent \"health check\"\nroute GET \"/health\" {\n  respond 200 with { status: \"ok\" }\n}";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens, input);
