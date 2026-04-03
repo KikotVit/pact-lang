@@ -37,6 +37,8 @@ pub struct Interpreter {
     pub module_cache: HashMap<PathBuf, Environment>,
     pub routes: Vec<StoredRoute>,
     pub app_config: Option<(String, u16)>,
+    /// Predetermined sequence for rng (testing)
+    rng_sequence: Option<Vec<String>>,
     /// Effects blocked from global lookup (enforces `needs` declarations)
     blocked_effects: Vec<String>,
 }
@@ -55,6 +57,7 @@ impl Interpreter {
             module_cache: HashMap::new(),
             routes: Vec::new(),
             app_config: None,
+            rng_sequence: None,
             blocked_effects: Vec::new(),
         }
     }
@@ -982,6 +985,21 @@ impl Interpreter {
                     self.rng_seed = Some(*seed as u64);
                     self.rng_counter = 0;
                 }
+                self.rng_sequence = None;
+                Ok(self.make_rng_effect())
+            }
+            "rng.sequence" => {
+                if let Some(Value::List(items)) = args.first() {
+                    let seq: Vec<String> = items
+                        .iter()
+                        .map(|v| match v {
+                            Value::String(s) => s.clone(),
+                            other => format!("{}", other),
+                        })
+                        .collect();
+                    self.rng_sequence = Some(seq);
+                    self.rng_counter = 0;
+                }
                 Ok(self.make_rng_effect())
             }
             "db.memory" => {
@@ -1227,13 +1245,33 @@ impl Interpreter {
         Ok(Value::String(time_str))
     }
 
+    fn next_from_sequence(&mut self) -> Option<String> {
+        if let Some(ref seq) = self.rng_sequence {
+            let idx = self.rng_counter as usize;
+            self.rng_counter += 1;
+            Some(
+                seq.get(idx)
+                    .cloned()
+                    .unwrap_or_else(|| format!("seq-overflow-{}", idx)),
+            )
+        } else {
+            None
+        }
+    }
+
     fn builtin_rng_uuid(&mut self) -> Result<Value, RuntimeError> {
+        if let Some(val) = self.next_from_sequence() {
+            return Ok(Value::String(val));
+        }
         self.rng_counter += 1;
         let seed = self.rng_seed.unwrap_or(0);
         Ok(Value::String(format!("uuid-{}-{}", seed, self.rng_counter)))
     }
 
     fn builtin_rng_hex(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        if let Some(val) = self.next_from_sequence() {
+            return Ok(Value::String(val));
+        }
         let length = match args.first() {
             Some(Value::Int(n)) => *n as usize,
             _ => return Err(self.error("rng.hex expects 1 argument: length (Int)")),
@@ -1343,6 +1381,12 @@ impl Interpreter {
             "deterministic".to_string(),
             Value::BuiltinFn {
                 name: "rng.deterministic".to_string(),
+            },
+        );
+        rng_methods.insert(
+            "sequence".to_string(),
+            Value::BuiltinFn {
+                name: "rng.sequence".to_string(),
             },
         );
         self.global.bind(
@@ -1530,6 +1574,12 @@ impl Interpreter {
             "deterministic".to_string(),
             Value::BuiltinFn {
                 name: "rng.deterministic".to_string(),
+            },
+        );
+        methods.insert(
+            "sequence".to_string(),
+            Value::BuiltinFn {
+                name: "rng.sequence".to_string(),
             },
         );
         Value::Effect {
