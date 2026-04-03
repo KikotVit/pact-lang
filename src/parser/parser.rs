@@ -86,7 +86,7 @@ impl Parser {
             Ok(self.advance())
         } else {
             Err(self.error(
-                &format!("Expected {:?}, found {:?}", kind, self.current_kind()),
+                &format!("Expected {}, found {}", kind, self.current_kind()),
                 None,
             ))
         }
@@ -99,7 +99,7 @@ impl Parser {
                 Ok(name)
             }
             _ => Err(self.error(
-                &format!("Expected identifier, found {:?}", self.current_kind()),
+                &format!("Expected identifier, found {}", self.current_kind()),
                 None,
             )),
         }
@@ -149,13 +149,13 @@ impl Parser {
             let context = self.block_stack.last();
             let msg = if let Some(ctx) = context {
                 format!(
-                    "Expected '}}' to close '{}' block started at line {}, found {:?}",
+                    "Unclosed '{}' block (opened at line {}). Expected '}}', found {}",
                     ctx.kind,
                     ctx.line,
                     self.current_kind()
                 )
             } else {
-                format!("Expected '}}', found {:?}", self.current_kind())
+                format!("Expected '}}', found {}", self.current_kind())
             };
             Err(self.error(&msg, None))
         }
@@ -252,10 +252,10 @@ impl Parser {
                     } else {
                         return self.fail(
                             &format!(
-                                "Expected 'first' or 'last' after 'take', found {:?}",
+                                "Expected 'first' or 'last' after 'take', found {}",
                                 self.current_kind()
                             ),
-                            None,
+                            Some("Syntax: | take first N  or  | take last N"),
                         );
                     };
                     let count = self.parse_or()?;
@@ -295,10 +295,10 @@ impl Parser {
                     } else {
                         self.fail(
                             &format!(
-                                "Expected 'success', 'one', or 'any' after 'expect', found {:?}",
+                                "Expected 'success', 'one', or 'any' after 'expect', found {}",
                                 self.current_kind()
                             ),
-                            None,
+                            Some("Syntax: | expect one or raise Error  |  | expect any or raise Error  |  | expect success"),
                         )
                     }
                 }
@@ -356,7 +356,7 @@ impl Parser {
             }
         }
         Err(self.error(
-            &format!("Expected '{}', found {:?}", word, self.current_kind()),
+            &format!("Expected '{}', found {}", word, self.current_kind()),
             None,
         ))
     }
@@ -605,7 +605,10 @@ impl Parser {
                 let expr = self.parse_expression()?;
                 Ok(Expr::Ensure(Box::new(expr)))
             }
-            _ => self.fail("Expected expression", None),
+            _ => self.fail(
+                &format!("Expected expression, found {}", self.current_kind()),
+                Some("Expressions: literal (42, \"text\", true), identifier, function call, if/match, { block }"),
+            ),
         }
     }
 
@@ -677,8 +680,8 @@ impl Parser {
                 Ok(Pattern::Literal(expr))
             }
             _ => self.fail(
-                &format!("Expected pattern, found {:?}", self.current_kind()),
-                Some("Patterns can be identifiers (Admin), _ (wildcard), or literals (42, true)"),
+                &format!("Expected match pattern, found {}", self.current_kind()),
+                Some("Valid patterns: identifier (Admin), _ (wildcard), or literal (42, true, \"text\")"),
             ),
         }
     }
@@ -697,6 +700,12 @@ impl Parser {
     // --- Type expression parsing ---
 
     pub fn parse_type_expr(&mut self) -> Result<TypeExpr, ParseError> {
+        if !matches!(self.current_kind(), TokenKind::Identifier(_)) {
+            return Err(self.error(
+                &format!("Expected type name, found {}", self.current_kind()),
+                Some("Built-in types: Int, Float, String, Bool, List, Struct"),
+            ));
+        }
         let name = self.expect_identifier()?;
 
         let base = if name == "Optional" && self.at(&TokenKind::LAngle) {
@@ -779,8 +788,21 @@ impl Parser {
     }
 
     fn parse_let_or_var(&mut self, mutable: bool) -> Result<Statement, ParseError> {
+        let keyword = if mutable { "var" } else { "let" };
         self.advance(); // consume let/var
         let name = self.expect_identifier()?;
+        if self.at(&TokenKind::Assign) {
+            return Err(self.error(
+                &format!(
+                    "Missing type annotation. PACT requires: {} {}: Type = value",
+                    keyword, name
+                ),
+                Some(&format!(
+                    "Example: {} {}: Int = 42  or  {} {}: String = \"hello\"",
+                    keyword, name, keyword, name
+                )),
+            ));
+        }
         self.expect(&TokenKind::Colon)?;
         let type_ann = self.parse_type_expr()?;
         self.expect(&TokenKind::Assign)?;
@@ -889,7 +911,7 @@ impl Parser {
             return self.fail(
                 "Function body must start with '{'",
                 Some(&format!(
-                    "Found {:?} instead of opening brace",
+                    "Found {} instead of opening brace",
                     self.current_kind()
                 )),
             );
@@ -931,10 +953,10 @@ impl Parser {
             }
             _ => self.fail(
                 &format!(
-                    "Expected string after 'intent', found {:?}",
+                    "Expected string after 'intent', found {}",
                     self.current_kind()
                 ),
-                None,
+                Some("Syntax: intent \"description of what this function does\""),
             ),
         }
     }
@@ -997,10 +1019,10 @@ impl Parser {
         } else {
             self.fail(
                 &format!(
-                    "Expected '{{' or '=' after type name, found {:?}",
+                    "Expected '{{' or '=' after type name, found {}",
                     self.current_kind()
                 ),
-                None,
+                Some("Struct: type Name { field: Type }  |  Union: type Name = A | B | C"),
             )
         }
     }
@@ -1162,11 +1184,8 @@ impl Parser {
                         }
                         _ => {
                             return self.fail(
-                                &format!(
-                                    "Unexpected token in route path: {:?}",
-                                    self.current_kind()
-                                ),
-                                None,
+                                &format!("Unexpected token in route path: {}", self.current_kind()),
+                                Some("Route path must be a string like \"/users/{id}\""),
                             );
                         }
                     }
@@ -1175,10 +1194,10 @@ impl Parser {
             }
             _ => self.fail(
                 &format!(
-                    "Expected string for route path, found {:?}",
+                    "Expected string for route path, found {}",
                     self.current_kind()
                 ),
-                None,
+                Some("Syntax: route GET \"/path\" { ... }"),
             ),
         }
     }
@@ -1259,8 +1278,8 @@ impl Parser {
             }
             _ => {
                 return self.fail(
-                    &format!("Expected integer for port, found {:?}", self.current_kind()),
-                    None,
+                    &format!("Expected integer for port, found {}", self.current_kind()),
+                    Some("Syntax: app Name { port: 8080 }"),
                 );
             }
         };

@@ -216,7 +216,12 @@ impl Interpreter {
                 } else if let Some(val) = self.global.lookup(name) {
                     Ok(val.clone())
                 } else {
-                    Err(self.error(&format!("Undefined variable '{}'", name)))
+                    let mut err = self.error(&format!("Undefined variable '{}'", name));
+                    err.hint = Some(
+                        "Variables must be declared with 'let' or 'var', or passed as function parameters"
+                            .to_string(),
+                    );
+                    Err(err)
                 }
             }
             Expr::StringLiteral(string_expr) => match string_expr {
@@ -246,9 +251,33 @@ impl Interpreter {
                         .get(field)
                         .cloned()
                         .ok_or_else(|| self.error(&format!("Effect has no method '{}'", field))),
-                    _ => {
-                        Err(self.error(&format!("Cannot access field on {} type", obj.type_name())))
+                    Value::String(_) => {
+                        let mut err = self.error(&format!(
+                            "String has no field '{}'. Did you mean .{}()?",
+                            field, field
+                        ));
+                        err.hint = Some(
+                            "String methods: length(), contains(), to_upper(), to_lower(), trim(), split(), replace()"
+                                .to_string(),
+                        );
+                        Err(err)
                     }
+                    Value::List(_) => {
+                        let mut err = self.error(&format!(
+                            "List has no field '{}'. Did you mean .{}()?",
+                            field, field
+                        ));
+                        err.hint = Some(
+                            "List methods: length(), contains(), push(), get(), join(), is_empty(), first(), last()"
+                                .to_string(),
+                        );
+                        Err(err)
+                    }
+                    _ => Err(self.error(&format!(
+                        "Cannot access field '{}' on {} value",
+                        field,
+                        obj.type_name()
+                    ))),
                 }
             }
             Expr::DotShorthand(parts) => {
@@ -1239,7 +1268,9 @@ impl Interpreter {
             }
         }
 
-        Err(self.error("No matching pattern"))
+        let mut err = self.error(&format!("No matching pattern for value: {}", subject_val));
+        err.hint = Some("Add a catch-all arm: _ => ...".to_string());
+        Err(err)
     }
 
     fn pattern_matches(
