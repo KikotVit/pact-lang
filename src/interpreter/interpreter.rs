@@ -465,6 +465,18 @@ impl Interpreter {
         args: &[Expr],
         env: &mut Environment,
     ) -> Result<Value, RuntimeError> {
+        // Method calls on String/List: "hello".length(), items.contains(x)
+        if let Expr::FieldAccess { object, field } = callee {
+            let obj = self.eval_expr(object, env)?;
+            if matches!(&obj, Value::String(_) | Value::List(_)) {
+                let mut arg_vals = Vec::new();
+                for arg in args {
+                    arg_vals.push(self.eval_expr(arg, env)?);
+                }
+                return self.call_method(&obj, field, arg_vals);
+            }
+        }
+
         let callee_val = self.eval_expr(callee, env)?;
         let mut arg_vals = Vec::new();
         for arg in args {
@@ -822,6 +834,93 @@ impl Interpreter {
     }
 
     // --- Builtin functions ---
+
+    fn call_method(
+        &self,
+        receiver: &Value,
+        method: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        match receiver {
+            Value::String(s) => match method {
+                "length" => Ok(Value::Int(s.len() as i64)),
+                "contains" => match args.first() {
+                    Some(Value::String(sub)) => Ok(Value::Bool(s.contains(sub.as_str()))),
+                    _ => Err(self.error("String.contains() expects a String argument")),
+                },
+                "to_upper" => Ok(Value::String(s.to_uppercase())),
+                "to_lower" => Ok(Value::String(s.to_lowercase())),
+                "trim" => Ok(Value::String(s.trim().to_string())),
+                "split" => match args.first() {
+                    Some(Value::String(sep)) => Ok(Value::List(
+                        s.split(sep.as_str())
+                            .map(|p| Value::String(p.to_string()))
+                            .collect(),
+                    )),
+                    _ => Err(self.error("String.split() expects a String separator")),
+                },
+                "starts_with" => match args.first() {
+                    Some(Value::String(prefix)) => Ok(Value::Bool(s.starts_with(prefix.as_str()))),
+                    _ => Err(self.error("String.starts_with() expects a String argument")),
+                },
+                "ends_with" => match args.first() {
+                    Some(Value::String(suffix)) => Ok(Value::Bool(s.ends_with(suffix.as_str()))),
+                    _ => Err(self.error("String.ends_with() expects a String argument")),
+                },
+                "replace" => match (args.first(), args.get(1)) {
+                    (Some(Value::String(from)), Some(Value::String(to))) => {
+                        Ok(Value::String(s.replace(from.as_str(), to.as_str())))
+                    }
+                    _ => Err(self.error("String.replace() expects two String arguments")),
+                },
+                _ => Err(self.error(&format!("String has no method '{}'", method))),
+            },
+            Value::List(items) => match method {
+                "length" => Ok(Value::Int(items.len() as i64)),
+                "contains" => {
+                    let target = args
+                        .first()
+                        .ok_or_else(|| self.error("List.contains() expects 1 argument"))?;
+                    Ok(Value::Bool(items.contains(target)))
+                }
+                "push" => {
+                    let mut new_items = items.clone();
+                    for arg in args {
+                        new_items.push(arg);
+                    }
+                    Ok(Value::List(new_items))
+                }
+                "get" => match args.first() {
+                    Some(Value::Int(i)) => {
+                        let idx = *i as usize;
+                        Ok(items.get(idx).cloned().unwrap_or(Value::Nothing))
+                    }
+                    _ => Err(self.error("List.get() expects an Int index")),
+                },
+                "join" => match args.first() {
+                    Some(Value::String(sep)) => {
+                        let parts: Vec<String> = items.iter().map(|v| format!("{}", v)).collect();
+                        Ok(Value::String(parts.join(sep.as_str())))
+                    }
+                    _ => Err(self.error("List.join() expects a String separator")),
+                },
+                "is_empty" => Ok(Value::Bool(items.is_empty())),
+                "first" => Ok(items.first().cloned().unwrap_or(Value::Nothing)),
+                "last" => Ok(items.last().cloned().unwrap_or(Value::Nothing)),
+                "reverse" => {
+                    let mut rev = items.clone();
+                    rev.reverse();
+                    Ok(Value::List(rev))
+                }
+                _ => Err(self.error(&format!("List has no method '{}'", method))),
+            },
+            _ => Err(self.error(&format!(
+                "Cannot call method '{}' on {}",
+                method,
+                receiver.type_name()
+            ))),
+        }
+    }
 
     fn call_builtin(&mut self, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
         match name {
