@@ -35,7 +35,7 @@ pub struct Interpreter {
     pending_return: Option<Value>,
     pub base_dir: Option<PathBuf>,
     pub module_cache: HashMap<PathBuf, Environment>,
-    pub type_defs: HashMap<String, Vec<String>>,
+    pub type_defs: HashMap<String, Vec<(String, bool)>>, // (field_name, is_optional)
     pub routes: Vec<StoredRoute>,
     pub app_config: Option<(String, u16)>,
     /// Predetermined sequence for rng (testing)
@@ -109,8 +109,15 @@ impl Interpreter {
             }
             Statement::TypeDecl(decl) => {
                 if let crate::parser::ast::TypeDecl::Struct { name, fields } = decl {
-                    let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
-                    self.type_defs.insert(name.clone(), field_names);
+                    let field_info: Vec<(String, bool)> = fields
+                        .iter()
+                        .map(|f| {
+                            let optional =
+                                matches!(f.type_ann, crate::parser::ast::TypeExpr::Optional(_));
+                            (f.name.clone(), optional)
+                        })
+                        .collect();
+                    self.type_defs.insert(name.clone(), field_info);
                 }
                 Ok(StmtResult::Value(Value::Nothing))
             }
@@ -852,16 +859,23 @@ impl Interpreter {
                 }
             }
             PipelineStep::ValidateAs { type_name } => {
-                if let Some(required_fields) = self.type_defs.get(type_name) {
+                if let Some(type_fields) = self.type_defs.get(type_name).cloned() {
                     match &current {
                         Value::Struct { fields, .. } => {
-                            let missing: Vec<&String> = required_fields
+                            // Check missing required (non-optional) fields
+                            let missing: Vec<&str> = type_fields
                                 .iter()
-                                .filter(|f| !fields.contains_key(*f))
+                                .filter(|(name, optional)| !optional && !fields.contains_key(name))
+                                .map(|(name, _)| name.as_str())
                                 .collect();
-                            if missing.is_empty() {
-                                Ok(current)
-                            } else {
+                            // Check unknown fields
+                            let known: Vec<&str> =
+                                type_fields.iter().map(|(n, _)| n.as_str()).collect();
+                            let unknown: Vec<&String> = fields
+                                .keys()
+                                .filter(|k| !known.contains(&k.as_str()))
+                                .collect();
+                            if !missing.is_empty() {
                                 Ok(Value::Error {
                                     variant: "ValidationError".to_string(),
                                     fields: Some({
@@ -870,7 +884,22 @@ impl Interpreter {
                                             "message".to_string(),
                                             Value::String(format!(
                                                 "Missing required fields: {}",
-                                                missing
+                                                missing.join(", ")
+                                            )),
+                                        );
+                                        m
+                                    }),
+                                })
+                            } else if !unknown.is_empty() {
+                                Ok(Value::Error {
+                                    variant: "ValidationError".to_string(),
+                                    fields: Some({
+                                        let mut m = HashMap::new();
+                                        m.insert(
+                                            "message".to_string(),
+                                            Value::String(format!(
+                                                "Unknown fields: {}",
+                                                unknown
                                                     .iter()
                                                     .map(|s| s.as_str())
                                                     .collect::<Vec<_>>()
@@ -880,6 +909,8 @@ impl Interpreter {
                                         m
                                     }),
                                 })
+                            } else {
+                                Ok(current)
                             }
                         }
                         _ => Ok(Value::Error {
