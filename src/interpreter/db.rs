@@ -34,6 +34,7 @@ pub enum DbBackend {
     },
     Sqlite {
         conn: Connection,
+        schemas: HashMap<String, Vec<ColDef>>,
     },
 }
 
@@ -49,7 +50,7 @@ impl DbBackend {
     pub fn new_sqlite(path: &str) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-        Ok(DbBackend::Sqlite { conn })
+        Ok(DbBackend::Sqlite { conn, schemas: HashMap::new() })
     }
 
     /// Drop all data (Memory: clear HashMap; Sqlite: drop all tables).
