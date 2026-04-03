@@ -91,20 +91,52 @@ pub enum Expr {
     BoolLiteral(bool),
     Nothing,
     Identifier(String),
-    FieldAccess { object: Box<Expr>, field: String },
+    FieldAccess {
+        object: Box<Expr>,
+        field: String,
+    },
     DotShorthand(Vec<String>),
-    BinaryOp { left: Box<Expr>, op: BinaryOp, right: Box<Expr> },
-    UnaryOp { op: UnaryOp, operand: Box<Expr> },
+    BinaryOp {
+        left: Box<Expr>,
+        op: BinaryOp,
+        right: Box<Expr>,
+    },
+    UnaryOp {
+        op: UnaryOp,
+        operand: Box<Expr>,
+    },
     ErrorPropagation(Box<Expr>),
-    FnCall { callee: Box<Expr>, args: Vec<Expr> },
-    Pipeline { source: Box<Expr>, steps: Vec<PipelineStep> },
-    If { condition: Box<Expr>, then_body: Vec<Statement>, else_body: Option<Vec<Statement>> },
-    Match { subject: Box<Expr>, arms: Vec<MatchArm> },
+    FnCall {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    Pipeline {
+        source: Box<Expr>,
+        steps: Vec<PipelineStep>,
+    },
+    If {
+        condition: Box<Expr>,
+        then_body: Vec<Statement>,
+        else_body: Option<Vec<Statement>>,
+    },
+    Match {
+        subject: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
     Block(Vec<Statement>),
-    StructLiteral { name: Option<String>, fields: Vec<StructField> },
+    StructLiteral {
+        name: Option<String>,
+        fields: Vec<StructField>,
+    },
     Ensure(Box<Expr>),
-    Is { expr: Box<Expr>, type_name: String },
-    Respond { status: Box<Expr>, body: Box<Expr> },
+    Is {
+        expr: Box<Expr>,
+        type_name: String,
+    },
+    Respond {
+        status: Box<Expr>,
+        body: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,9 +172,18 @@ pub enum Pattern {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
-    Add, Sub, Mul, Div,
-    Eq, NotEq, Lt, Gt, LtEq, GtEq,
-    And, Or,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    And,
+    Or,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -184,7 +225,13 @@ pub enum TakeKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExpr {
     Named(String),
-    Generic { name: String, args: Vec<TypeExpr> },
+    Generic {
+        name: String,
+        args: Vec<TypeExpr>,
+    },
     Optional(Box<TypeExpr>),
-    Result { ok: Box<TypeExpr>, errors: Vec<String> },
+    Result {
+        ok: Box<TypeExpr>,
+        errors: Vec<String>,
+    },
 }

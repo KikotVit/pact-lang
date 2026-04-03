@@ -1,5 +1,5 @@
 use crate::lexer::errors::LexerError;
-use crate::lexer::token::{Token, TokenKind, Span};
+use crate::lexer::token::{Span, Token, TokenKind};
 
 pub struct Lexer {
     source: Vec<char>,
@@ -67,20 +67,20 @@ impl Lexer {
                 let is_continuation = matches!(
                     self.last_token_kind.as_ref(),
                     Some(TokenKind::Pipe)
-                    | Some(TokenKind::Arrow)
-                    | Some(TokenKind::FatArrow)
-                    | Some(TokenKind::Comma)
-                    | Some(TokenKind::Assign)
-                    | Some(TokenKind::Eq)
-                    | Some(TokenKind::NotEq)
-                    | Some(TokenKind::LessEq)
-                    | Some(TokenKind::GreaterEq)
-                    | Some(TokenKind::Plus)
-                    | Some(TokenKind::Minus)
-                    | Some(TokenKind::Star)
-                    | Some(TokenKind::Slash)
-                    | Some(TokenKind::And)
-                    | Some(TokenKind::Or)
+                        | Some(TokenKind::Arrow)
+                        | Some(TokenKind::FatArrow)
+                        | Some(TokenKind::Comma)
+                        | Some(TokenKind::Assign)
+                        | Some(TokenKind::Eq)
+                        | Some(TokenKind::NotEq)
+                        | Some(TokenKind::LessEq)
+                        | Some(TokenKind::GreaterEq)
+                        | Some(TokenKind::Plus)
+                        | Some(TokenKind::Minus)
+                        | Some(TokenKind::Star)
+                        | Some(TokenKind::Slash)
+                        | Some(TokenKind::And)
+                        | Some(TokenKind::Or)
                 );
                 if is_continuation {
                     return self.next_token();
@@ -312,11 +312,7 @@ impl Lexer {
             c if c.is_alphabetic() => self.read_identifier_or_keyword(),
 
             // Unknown character
-            _ => Err(self.error(
-                1,
-                &format!("Unexpected character '{}'", ch),
-                None,
-            )),
+            _ => Err(self.error(1, &format!("Unexpected character '{}'", ch), None)),
         }
     }
 
@@ -362,13 +358,27 @@ impl Lexer {
 
         if is_float {
             match num_str.parse::<f64>() {
-                Ok(val) => Ok(Token { kind: TokenKind::FloatLiteral(val), span }),
-                Err(e) => Err(self.error(length, &format!("Invalid float literal '{}': {}", num_str, e), None)),
+                Ok(val) => Ok(Token {
+                    kind: TokenKind::FloatLiteral(val),
+                    span,
+                }),
+                Err(e) => Err(self.error(
+                    length,
+                    &format!("Invalid float literal '{}': {}", num_str, e),
+                    None,
+                )),
             }
         } else {
             match num_str.parse::<i64>() {
-                Ok(val) => Ok(Token { kind: TokenKind::IntLiteral(val), span }),
-                Err(_) => Err(self.error(length, &format!("Invalid integer literal '{}'", num_str), Some("Integer values must fit in 64-bit signed range"))),
+                Ok(val) => Ok(Token {
+                    kind: TokenKind::IntLiteral(val),
+                    span,
+                }),
+                Err(_) => Err(self.error(
+                    length,
+                    &format!("Invalid integer literal '{}'", num_str),
+                    Some("Integer values must fit in 64-bit signed range"),
+                )),
             }
         }
     }
@@ -535,7 +545,11 @@ impl Lexer {
                 }
                 '\n' => {
                     // Regular strings cannot contain literal newlines
-                    return Err(self.error(1, "Unterminated string literal", Some("Use triple-quoted strings (\"\"\"...\"\"\") for multiline strings")));
+                    return Err(self.error(
+                        1,
+                        "Unterminated string literal",
+                        Some("Use triple-quoted strings (\"\"\"...\"\"\") for multiline strings"),
+                    ));
                 }
                 _ => {
                     fragment.push(ch);
@@ -703,7 +717,12 @@ impl Lexer {
         }
     }
 
-    fn read_raw_string(&mut self, start_line: usize, start_col: usize, start_offset: usize) -> Result<Token, LexerError> {
+    fn read_raw_string(
+        &mut self,
+        start_line: usize,
+        start_col: usize,
+        start_offset: usize,
+    ) -> Result<Token, LexerError> {
         self.advance(); // consume opening "
         let mut content = String::new();
 
@@ -847,9 +866,15 @@ mod tests {
         assert_eq!(
             tokenize("+ - * / = : , . ?"),
             vec![
-                TokenKind::Plus, TokenKind::Minus, TokenKind::Star,
-                TokenKind::Slash, TokenKind::Assign, TokenKind::Colon,
-                TokenKind::Comma, TokenKind::Dot, TokenKind::Question,
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Star,
+                TokenKind::Slash,
+                TokenKind::Assign,
+                TokenKind::Colon,
+                TokenKind::Comma,
+                TokenKind::Dot,
+                TokenKind::Question,
                 TokenKind::Eof,
             ]
         );
@@ -860,9 +885,12 @@ mod tests {
         assert_eq!(
             tokenize("( ) { } [ ]"),
             vec![
-                TokenKind::LParen, TokenKind::RParen,
-                TokenKind::LBrace, TokenKind::RBrace,
-                TokenKind::LBracket, TokenKind::RBracket,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::LBrace,
+                TokenKind::RBrace,
+                TokenKind::LBracket,
+                TokenKind::RBracket,
                 TokenKind::Eof,
             ]
         );
@@ -872,7 +900,12 @@ mod tests {
     fn pipe_and_angle_brackets() {
         assert_eq!(
             tokenize("| < >"),
-            vec![TokenKind::Pipe, TokenKind::LAngle, TokenKind::RAngle, TokenKind::Eof]
+            vec![
+                TokenKind::Pipe,
+                TokenKind::LAngle,
+                TokenKind::RAngle,
+                TokenKind::Eof
+            ]
         );
     }
 
@@ -881,9 +914,14 @@ mod tests {
         assert_eq!(
             tokenize("== != <= >= -> => ..."),
             vec![
-                TokenKind::Eq, TokenKind::NotEq, TokenKind::LessEq,
-                TokenKind::GreaterEq, TokenKind::Arrow, TokenKind::FatArrow,
-                TokenKind::Spread, TokenKind::Eof,
+                TokenKind::Eq,
+                TokenKind::NotEq,
+                TokenKind::LessEq,
+                TokenKind::GreaterEq,
+                TokenKind::Arrow,
+                TokenKind::FatArrow,
+                TokenKind::Spread,
+                TokenKind::Eof,
             ]
         );
     }
@@ -893,8 +931,10 @@ mod tests {
         assert_eq!(
             tokenize("a // comment\nb // another"),
             vec![
-                TokenKind::Identifier("a".to_string()), TokenKind::Newline,
-                TokenKind::Identifier("b".to_string()), TokenKind::Eof,
+                TokenKind::Identifier("a".to_string()),
+                TokenKind::Newline,
+                TokenKind::Identifier("b".to_string()),
+                TokenKind::Eof,
             ]
         );
     }
@@ -904,7 +944,12 @@ mod tests {
         // Standalone _ is Underscore, _foo would be identifier (but that requires Task 5)
         assert_eq!(
             tokenize("_ + _"),
-            vec![TokenKind::Underscore, TokenKind::Plus, TokenKind::Underscore, TokenKind::Eof]
+            vec![
+                TokenKind::Underscore,
+                TokenKind::Plus,
+                TokenKind::Underscore,
+                TokenKind::Eof
+            ]
         );
     }
 
@@ -922,7 +967,12 @@ mod tests {
     fn newline_suppressed_inside_braces() {
         assert_eq!(
             tokenize("{\n+\n}"),
-            vec![TokenKind::LBrace, TokenKind::Plus, TokenKind::RBrace, TokenKind::Eof]
+            vec![
+                TokenKind::LBrace,
+                TokenKind::Plus,
+                TokenKind::RBrace,
+                TokenKind::Eof
+            ]
         );
     }
 
@@ -1010,8 +1060,14 @@ mod tests {
         assert_eq!(
             tokenize("fn let var type if else match return"),
             vec![
-                TokenKind::Fn, TokenKind::Let, TokenKind::Var, TokenKind::Type,
-                TokenKind::If, TokenKind::Else, TokenKind::Match, TokenKind::Return,
+                TokenKind::Fn,
+                TokenKind::Let,
+                TokenKind::Var,
+                TokenKind::Type,
+                TokenKind::If,
+                TokenKind::Else,
+                TokenKind::Match,
+                TokenKind::Return,
                 TokenKind::Eof,
             ]
         );
@@ -1050,14 +1106,32 @@ mod tests {
     fn all_23_keywords() {
         // true/false are keywords but lexer emits BoolLiteral — tested in bool_literals_from_keywords
         assert_eq!(
-            tokenize("fn let var type if else match return use intent ensure needs route test app check true false nothing and or not as"),
+            tokenize(
+                "fn let var type if else match return use intent ensure needs route test app check true false nothing and or not as"
+            ),
             vec![
-                TokenKind::Fn, TokenKind::Let, TokenKind::Var, TokenKind::Type,
-                TokenKind::If, TokenKind::Else, TokenKind::Match, TokenKind::Return,
-                TokenKind::Use, TokenKind::Intent, TokenKind::Ensure, TokenKind::Needs,
-                TokenKind::Route, TokenKind::Test, TokenKind::App, TokenKind::Check,
-                TokenKind::BoolLiteral(true), TokenKind::BoolLiteral(false),
-                TokenKind::Nothing, TokenKind::And, TokenKind::Or, TokenKind::Not,
+                TokenKind::Fn,
+                TokenKind::Let,
+                TokenKind::Var,
+                TokenKind::Type,
+                TokenKind::If,
+                TokenKind::Else,
+                TokenKind::Match,
+                TokenKind::Return,
+                TokenKind::Use,
+                TokenKind::Intent,
+                TokenKind::Ensure,
+                TokenKind::Needs,
+                TokenKind::Route,
+                TokenKind::Test,
+                TokenKind::App,
+                TokenKind::Check,
+                TokenKind::BoolLiteral(true),
+                TokenKind::BoolLiteral(false),
+                TokenKind::Nothing,
+                TokenKind::And,
+                TokenKind::Or,
+                TokenKind::Not,
                 TokenKind::As,
                 TokenKind::Eof,
             ]
@@ -1083,11 +1157,7 @@ mod tests {
     fn empty_string() {
         assert_eq!(
             tokenize(r#""""#),
-            vec![
-                TokenKind::StringStart,
-                TokenKind::StringEnd,
-                TokenKind::Eof,
-            ]
+            vec![TokenKind::StringStart, TokenKind::StringEnd, TokenKind::Eof,]
         );
     }
 

@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use tiny_http::{Header, Response, Server, StatusCode};
 
+use crate::interpreter::Interpreter;
 use crate::interpreter::json::{json_to_value, value_to_json};
 use crate::interpreter::value::Value;
-use crate::interpreter::Interpreter;
 
 #[derive(Debug, Clone)]
 enum PathSegment {
@@ -111,14 +111,19 @@ pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
                     if matches!(status, 301 | 302 | 307 | 308) {
                         let location = fields.get("location").or_else(|| {
                             fields.get("body").and_then(|b| {
-                                if let Value::Struct { fields: bf, .. } = b { bf.get("location") } else { None }
+                                if let Value::Struct { fields: bf, .. } = b {
+                                    bf.get("location")
+                                } else {
+                                    None
+                                }
                             })
                         });
                         if let Some(Value::String(loc)) = location {
                             make_redirect_response(status, loc)
                         } else {
                             let body = fields.get("body").unwrap_or(&Value::Nothing);
-                            let json_body = serde_json::to_string(&value_to_json(body)).unwrap_or_default();
+                            let json_body =
+                                serde_json::to_string(&value_to_json(body)).unwrap_or_default();
                             make_json_response(status, &json_body)
                         }
                     } else {

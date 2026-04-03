@@ -45,7 +45,10 @@ impl Environment {
 
     /// Return all bindings in the current scope (not parent).
     pub fn all_bindings(&self) -> Vec<(String, Value)> {
-        self.values.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        self.values
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     pub fn assign(&mut self, name: &str, value: Value) -> Result<(), String> {
@@ -54,10 +57,7 @@ impl Environment {
                 self.values.insert(name.to_string(), value);
                 Ok(())
             } else {
-                Err(format!(
-                    "Cannot reassign immutable variable '{}'",
-                    name
-                ))
+                Err(format!("Cannot reassign immutable variable '{}'", name))
             }
         } else if let Some(ref mut parent) = self.parent {
             parent.assign(name, value)

@@ -1,6 +1,7 @@
 pub mod builtins;
 pub mod environment;
 pub mod errors;
+#[allow(clippy::module_inception)]
 pub mod interpreter;
 pub mod json;
 pub mod pipeline;

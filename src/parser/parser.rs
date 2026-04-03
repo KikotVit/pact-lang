@@ -47,7 +47,6 @@ impl Parser {
         &self.tokens[self.pos].kind
     }
 
-
     fn peek_at(&self, offset: usize) -> &TokenKind {
         let idx = self.pos + offset;
         if idx < self.tokens.len() {
@@ -86,10 +85,10 @@ impl Parser {
         if self.at(kind) {
             Ok(self.advance())
         } else {
-            Err(self.error(&format!(
-                "Expected {:?}, found {:?}",
-                kind, self.current_kind()
-            ), None))
+            Err(self.error(
+                &format!("Expected {:?}, found {:?}", kind, self.current_kind()),
+                None,
+            ))
         }
     }
 
@@ -116,7 +115,8 @@ impl Parser {
 
     fn error(&self, message: &str, hint: Option<&str>) -> ParseError {
         let token = self.current();
-        let source_line = self.source
+        let source_line = self
+            .source
             .lines()
             .nth(token.span.line - 1)
             .unwrap_or("")
@@ -135,7 +135,10 @@ impl Parser {
     }
 
     fn push_block(&mut self, kind: &'static str) {
-        self.block_stack.push(BlockContext { kind, line: self.current().span.line });
+        self.block_stack.push(BlockContext {
+            kind,
+            line: self.current().span.line,
+        });
     }
 
     fn expect_closing_brace(&mut self) -> Result<(), ParseError> {
@@ -145,7 +148,12 @@ impl Parser {
         } else {
             let context = self.block_stack.last();
             let msg = if let Some(ctx) = context {
-                format!("Expected '}}' to close '{}' block started at line {}, found {:?}", ctx.kind, ctx.line, self.current_kind())
+                format!(
+                    "Expected '}}' to close '{}' block started at line {}, found {:?}",
+                    ctx.kind,
+                    ctx.line,
+                    self.current_kind()
+                )
             } else {
                 format!("Expected '}}', found {:?}", self.current_kind())
             };
@@ -178,7 +186,10 @@ impl Parser {
             let step = self.parse_pipeline_step()?;
             steps.push(step);
         }
-        Ok(Expr::Pipeline { source: Box::new(source), steps })
+        Ok(Expr::Pipeline {
+            source: Box::new(source),
+            steps,
+        })
     }
 
     /// Check if there's a Pipe token after skipping newlines (lookahead without consuming).
@@ -222,13 +233,8 @@ impl Parser {
                     self.advance();
                     self.expect_contextual("by")?;
                     let field = self.parse_or()?;
-                    let descending = if self.eat_contextual("ascending") {
-                        false
-                    } else if self.eat_contextual("descending") {
-                        true
-                    } else {
-                        false
-                    };
+                    let descending =
+                        !self.eat_contextual("ascending") && self.eat_contextual("descending");
                     Ok(PipelineStep::Sort { field, descending })
                 }
                 "group" => {
@@ -245,7 +251,10 @@ impl Parser {
                         TakeKind::Last
                     } else {
                         return self.fail(
-                            &format!("Expected 'first' or 'last' after 'take', found {:?}", self.current_kind()),
+                            &format!(
+                                "Expected 'first' or 'last' after 'take', found {:?}",
+                                self.current_kind()
+                            ),
                             None,
                         );
                     };
@@ -285,7 +294,10 @@ impl Parser {
                         Ok(PipelineStep::ExpectAny { error })
                     } else {
                         self.fail(
-                            &format!("Expected 'success', 'one', or 'any' after 'expect', found {:?}", self.current_kind()),
+                            &format!(
+                                "Expected 'success', 'one', or 'any' after 'expect', found {:?}",
+                                self.current_kind()
+                            ),
                             None,
                         )
                     }
@@ -311,19 +323,19 @@ impl Parser {
                     if self.eat_contextual("success") {
                         self.expect(&TokenKind::Colon)?;
                         let body = self.parse_or()?;
-                        return Ok(PipelineStep::OnSuccess { body });
+                        Ok(PipelineStep::OnSuccess { body })
                     } else {
                         let variant = self.expect_identifier()?;
                         self.expect(&TokenKind::Colon)?;
                         let body = self.parse_or()?;
-                        return Ok(PipelineStep::OnError { variant, body });
+                        Ok(PipelineStep::OnError { variant, body })
                     }
                 }
                 "validate" => {
                     self.advance();
                     self.expect(&TokenKind::As)?;
                     let type_name = self.expect_identifier()?;
-                    return Ok(PipelineStep::ValidateAs { type_name });
+                    Ok(PipelineStep::ValidateAs { type_name })
                 }
                 _ => {
                     let expr = self.parse_or()?;
@@ -343,7 +355,10 @@ impl Parser {
                 return Ok(());
             }
         }
-        Err(self.error(&format!("Expected '{}', found {:?}", word, self.current_kind()), None))
+        Err(self.error(
+            &format!("Expected '{}', found {:?}", word, self.current_kind()),
+            None,
+        ))
     }
 
     fn eat_contextual(&mut self, word: &str) -> bool {
@@ -361,7 +376,11 @@ impl Parser {
         while self.at(&TokenKind::Or) {
             self.advance();
             let right = self.parse_and()?;
-            left = Expr::BinaryOp { left: Box::new(left), op: BinaryOp::Or, right: Box::new(right) };
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOp::Or,
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -371,7 +390,11 @@ impl Parser {
         while self.at(&TokenKind::And) {
             self.advance();
             let right = self.parse_not()?;
-            left = Expr::BinaryOp { left: Box::new(left), op: BinaryOp::And, right: Box::new(right) };
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op: BinaryOp::And,
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -380,7 +403,10 @@ impl Parser {
         if self.at(&TokenKind::Not) {
             self.advance();
             let operand = self.parse_not()?;
-            return Ok(Expr::UnaryOp { op: UnaryOp::Not, operand: Box::new(operand) });
+            return Ok(Expr::UnaryOp {
+                op: UnaryOp::Not,
+                operand: Box::new(operand),
+            });
         }
         self.parse_comparison()
     }
@@ -393,7 +419,10 @@ impl Parser {
             if word == "is" {
                 self.advance();
                 let type_name = self.expect_identifier()?;
-                return Ok(Expr::Is { expr: Box::new(left), type_name });
+                return Ok(Expr::Is {
+                    expr: Box::new(left),
+                    type_name,
+                });
             }
         }
 
@@ -408,7 +437,11 @@ impl Parser {
         };
         self.advance();
         let right = self.parse_addition()?;
-        Ok(Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) })
+        Ok(Expr::BinaryOp {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        })
     }
 
     fn parse_addition(&mut self) -> Result<Expr, ParseError> {
@@ -421,7 +454,11 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_multiplication()?;
-            left = Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) };
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -436,7 +473,11 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_unary()?;
-            left = Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) };
+            left = Expr::BinaryOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -445,7 +486,10 @@ impl Parser {
         if self.at(&TokenKind::Minus) {
             self.advance();
             let operand = self.parse_unary()?;
-            return Ok(Expr::UnaryOp { op: UnaryOp::Neg, operand: Box::new(operand) });
+            return Ok(Expr::UnaryOp {
+                op: UnaryOp::Neg,
+                operand: Box::new(operand),
+            });
         }
         self.parse_postfix()
     }
@@ -520,12 +564,17 @@ impl Parser {
                 let status = self.parse_or()?;
                 self.expect_contextual("with")?;
                 let body = self.parse_or()?;
-                Ok(Expr::Respond { status: Box::new(status), body: Box::new(body) })
+                Ok(Expr::Respond {
+                    status: Box::new(status),
+                    body: Box::new(body),
+                })
             }
             TokenKind::Identifier(name) => {
                 self.advance();
                 // Struct literal: PascalCase followed by {
-                if self.at(&TokenKind::LBrace) && name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                if self.at(&TokenKind::LBrace)
+                    && name.chars().next().is_some_and(|c| c.is_uppercase())
+                {
                     return self.parse_struct_literal(Some(name));
                 }
                 Ok(Expr::Identifier(name))
@@ -547,26 +596,16 @@ impl Parser {
                 self.expect(&TokenKind::RParen)?;
                 Ok(expr)
             }
-            TokenKind::Dot => {
-                self.parse_dot_shorthand()
-            }
-            TokenKind::StringStart | TokenKind::RawStringLiteral(_) => {
-                self.parse_string_expr()
-            }
-            TokenKind::If => {
-                self.parse_if_expr()
-            }
-            TokenKind::Match => {
-                self.parse_match_expr()
-            }
+            TokenKind::Dot => self.parse_dot_shorthand(),
+            TokenKind::StringStart | TokenKind::RawStringLiteral(_) => self.parse_string_expr(),
+            TokenKind::If => self.parse_if_expr(),
+            TokenKind::Match => self.parse_match_expr(),
             TokenKind::Ensure => {
                 self.advance(); // consume 'ensure'
                 let expr = self.parse_expression()?;
                 Ok(Expr::Ensure(Box::new(expr)))
             }
-            _ => {
-                self.fail("Expected expression", None)
-            }
+            _ => self.fail("Expected expression", None),
         }
     }
 
@@ -586,7 +625,11 @@ impl Parser {
         } else {
             None
         };
-        Ok(Expr::If { condition: Box::new(condition), then_body, else_body })
+        Ok(Expr::If {
+            condition: Box::new(condition),
+            then_body,
+            else_body,
+        })
     }
 
     fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
@@ -605,7 +648,10 @@ impl Parser {
             self.skip_newlines();
         }
         self.expect_closing_brace()?;
-        Ok(Expr::Match { subject: Box::new(subject), arms })
+        Ok(Expr::Match {
+            subject: Box::new(subject),
+            arms,
+        })
     }
 
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
@@ -739,14 +785,22 @@ impl Parser {
         let type_ann = self.parse_type_expr()?;
         self.expect(&TokenKind::Assign)?;
         let value = self.parse_expression()?;
-        Ok(Statement::Let { name, mutable, type_ann, value })
+        Ok(Statement::Let {
+            name,
+            mutable,
+            type_ann,
+            value,
+        })
     }
 
     fn parse_return(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // consume return
         // If next is newline/eof/rbrace → return with no value
         if self.at(&TokenKind::Newline) || self.at_eof() || self.at(&TokenKind::RBrace) {
-            return Ok(Statement::Return { value: None, condition: None });
+            return Ok(Statement::Return {
+                value: None,
+                condition: None,
+            });
         }
         let value = self.parse_expression()?;
         // Check for trailing `if` condition
@@ -755,7 +809,10 @@ impl Parser {
         } else {
             None
         };
-        Ok(Statement::Return { value: Some(value), condition })
+        Ok(Statement::Return {
+            value: Some(value),
+            condition,
+        })
     }
 
     fn parse_use(&mut self) -> Result<Statement, ParseError> {
@@ -816,7 +873,9 @@ impl Parser {
             if !self.at(&TokenKind::LBrace) {
                 effects.push(self.expect_identifier()?);
                 while self.eat(&TokenKind::Comma) {
-                    if self.at(&TokenKind::LBrace) { break; }
+                    if self.at(&TokenKind::LBrace) {
+                        break;
+                    }
                     effects.push(self.expect_identifier()?);
                 }
             }
@@ -827,7 +886,10 @@ impl Parser {
         if !self.at(&TokenKind::LBrace) {
             return self.fail(
                 "Function body must start with '{'",
-                Some(&format!("Found {:?} instead of opening brace", self.current_kind())),
+                Some(&format!(
+                    "Found {:?} instead of opening brace",
+                    self.current_kind()
+                )),
             );
         }
         self.advance(); // consume `{`
@@ -866,7 +928,10 @@ impl Parser {
                 }
             }
             _ => self.fail(
-                &format!("Expected string after 'intent', found {:?}", self.current_kind()),
+                &format!(
+                    "Expected string after 'intent', found {:?}",
+                    self.current_kind()
+                ),
                 None,
             ),
         }
@@ -882,7 +947,9 @@ impl Parser {
         let type_ann = self.parse_type_expr()?;
         params.push(Param { name, type_ann });
         while self.eat(&TokenKind::Comma) {
-            if self.at(&TokenKind::RParen) { break; } // trailing comma
+            if self.at(&TokenKind::RParen) {
+                break;
+            } // trailing comma
             let name = self.expect_identifier()?;
             self.expect(&TokenKind::Colon)?;
             let type_ann = self.parse_type_expr()?;
@@ -906,7 +973,10 @@ impl Parser {
                 let field_name = self.expect_identifier()?;
                 self.expect(&TokenKind::Colon)?;
                 let type_ann = self.parse_type_expr()?;
-                fields.push(Field { name: field_name, type_ann });
+                fields.push(Field {
+                    name: field_name,
+                    type_ann,
+                });
                 self.eat(&TokenKind::Comma);
                 self.skip_newlines();
             }
@@ -924,7 +994,10 @@ impl Parser {
             Ok(Statement::TypeDecl(TypeDecl::Union { name, variants }))
         } else {
             self.fail(
-                &format!("Expected '{{' or '=' after type name, found {:?}", self.current_kind()),
+                &format!(
+                    "Expected '{{' or '=' after type name, found {:?}",
+                    self.current_kind()
+                ),
                 None,
             )
         }
@@ -941,7 +1014,10 @@ impl Parser {
                 let field_name = self.expect_identifier()?;
                 self.expect(&TokenKind::Colon)?;
                 let type_ann = self.parse_type_expr()?;
-                fs.push(Field { name: field_name, type_ann });
+                fs.push(Field {
+                    name: field_name,
+                    type_ann,
+                });
                 self.eat(&TokenKind::Comma);
                 self.skip_newlines();
             }
@@ -990,7 +1066,10 @@ impl Parser {
                 let field_name = self.expect_identifier()?;
                 self.expect(&TokenKind::Colon)?;
                 let value = self.parse_expression()?;
-                fields.push(StructField::Named { name: field_name, value });
+                fields.push(StructField::Named {
+                    name: field_name,
+                    value,
+                });
             }
             self.eat(&TokenKind::Comma);
             self.skip_newlines();
@@ -1079,16 +1158,24 @@ impl Parser {
                             self.advance();
                             break;
                         }
-                        _ => return self.fail(
-                            &format!("Unexpected token in route path: {:?}", self.current_kind()),
-                            None,
-                        ),
+                        _ => {
+                            return self.fail(
+                                &format!(
+                                    "Unexpected token in route path: {:?}",
+                                    self.current_kind()
+                                ),
+                                None,
+                            );
+                        }
                     }
                 }
                 Ok(path)
             }
             _ => self.fail(
-                &format!("Expected string for route path, found {:?}", self.current_kind()),
+                &format!(
+                    "Expected string for route path, found {:?}",
+                    self.current_kind()
+                ),
                 None,
             ),
         }
@@ -1115,15 +1202,16 @@ impl Parser {
 
         // Optional: needs
         let mut effects = Vec::new();
-        if self.eat(&TokenKind::Needs) {
-            if !self.at(&TokenKind::LBrace) && !self.at(&TokenKind::Newline) {
-                effects.push(self.expect_identifier()?);
-                while self.eat(&TokenKind::Comma) {
-                    if self.at(&TokenKind::LBrace) || self.at(&TokenKind::Newline) {
-                        break;
-                    }
-                    effects.push(self.expect_identifier()?);
+        if self.eat(&TokenKind::Needs)
+            && !self.at(&TokenKind::LBrace)
+            && !self.at(&TokenKind::Newline)
+        {
+            effects.push(self.expect_identifier()?);
+            while self.eat(&TokenKind::Comma) {
+                if self.at(&TokenKind::LBrace) || self.at(&TokenKind::Newline) {
+                    break;
                 }
+                effects.push(self.expect_identifier()?);
             }
         }
         self.skip_newlines();
@@ -1132,7 +1220,13 @@ impl Parser {
         let body = self.parse_block_body()?;
         self.expect_closing_brace()?;
 
-        Ok(Statement::Route { method, path, intent, effects, body })
+        Ok(Statement::Route {
+            method,
+            path,
+            intent,
+            effects,
+            body,
+        })
     }
 
     fn parse_app(&mut self) -> Result<Statement, ParseError> {
@@ -1161,10 +1255,12 @@ impl Parser {
                 self.advance();
                 n as u16
             }
-            _ => return self.fail(
-                &format!("Expected integer for port, found {:?}", self.current_kind()),
-                None,
-            ),
+            _ => {
+                return self.fail(
+                    &format!("Expected integer for port, found {:?}", self.current_kind()),
+                    None,
+                );
+            }
         };
 
         // Eat optional comma
@@ -1325,12 +1421,10 @@ mod tests {
     fn parse_error_propagation() {
         assert_eq!(
             parse_expr("foo()?"),
-            Expr::ErrorPropagation(Box::new(
-                Expr::FnCall {
-                    callee: Box::new(Expr::Identifier("foo".to_string())),
-                    args: vec![],
-                }
-            )),
+            Expr::ErrorPropagation(Box::new(Expr::FnCall {
+                callee: Box::new(Expr::Identifier("foo".to_string())),
+                args: vec![],
+            })),
         );
     }
 
@@ -1347,102 +1441,170 @@ mod tests {
 
     #[test]
     fn parse_addition() {
-        assert_eq!(parse_expr("1 + 2"), Expr::BinaryOp {
-            left: Box::new(Expr::IntLiteral(1)), op: BinaryOp::Add, right: Box::new(Expr::IntLiteral(2)),
-        });
+        assert_eq!(
+            parse_expr("1 + 2"),
+            Expr::BinaryOp {
+                left: Box::new(Expr::IntLiteral(1)),
+                op: BinaryOp::Add,
+                right: Box::new(Expr::IntLiteral(2)),
+            }
+        );
     }
 
     #[test]
     fn parse_subtraction() {
-        assert_eq!(parse_expr("a - b"), Expr::BinaryOp {
-            left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::Sub, right: Box::new(Expr::Identifier("b".to_string())),
-        });
+        assert_eq!(
+            parse_expr("a - b"),
+            Expr::BinaryOp {
+                left: Box::new(Expr::Identifier("a".to_string())),
+                op: BinaryOp::Sub,
+                right: Box::new(Expr::Identifier("b".to_string())),
+            }
+        );
     }
 
     #[test]
     fn parse_multiplication_precedence() {
         // 1 + 2 * 3 → Add(1, Mul(2, 3))
-        assert_eq!(parse_expr("1 + 2 * 3"), Expr::BinaryOp {
-            left: Box::new(Expr::IntLiteral(1)),
-            op: BinaryOp::Add,
-            right: Box::new(Expr::BinaryOp {
-                left: Box::new(Expr::IntLiteral(2)), op: BinaryOp::Mul, right: Box::new(Expr::IntLiteral(3)),
-            }),
-        });
+        assert_eq!(
+            parse_expr("1 + 2 * 3"),
+            Expr::BinaryOp {
+                left: Box::new(Expr::IntLiteral(1)),
+                op: BinaryOp::Add,
+                right: Box::new(Expr::BinaryOp {
+                    left: Box::new(Expr::IntLiteral(2)),
+                    op: BinaryOp::Mul,
+                    right: Box::new(Expr::IntLiteral(3)),
+                }),
+            }
+        );
     }
 
     #[test]
     fn parse_unary_negation() {
-        assert_eq!(parse_expr("-42"), Expr::UnaryOp { op: UnaryOp::Neg, operand: Box::new(Expr::IntLiteral(42)) });
+        assert_eq!(
+            parse_expr("-42"),
+            Expr::UnaryOp {
+                op: UnaryOp::Neg,
+                operand: Box::new(Expr::IntLiteral(42))
+            }
+        );
     }
 
     #[test]
     fn parse_division() {
-        assert_eq!(parse_expr("a / b"), Expr::BinaryOp {
-            left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::Div, right: Box::new(Expr::Identifier("b".to_string())),
-        });
+        assert_eq!(
+            parse_expr("a / b"),
+            Expr::BinaryOp {
+                left: Box::new(Expr::Identifier("a".to_string())),
+                op: BinaryOp::Div,
+                right: Box::new(Expr::Identifier("b".to_string())),
+            }
+        );
     }
 
     #[test]
     fn parse_comparison_eq() {
-        assert_eq!(parse_expr("a == b"), Expr::BinaryOp {
-            left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::Eq, right: Box::new(Expr::Identifier("b".to_string())),
-        });
+        assert_eq!(
+            parse_expr("a == b"),
+            Expr::BinaryOp {
+                left: Box::new(Expr::Identifier("a".to_string())),
+                op: BinaryOp::Eq,
+                right: Box::new(Expr::Identifier("b".to_string())),
+            }
+        );
     }
 
     #[test]
     fn parse_comparison_not_eq() {
-        assert_eq!(parse_expr("a != b"), Expr::BinaryOp {
-            left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::NotEq, right: Box::new(Expr::Identifier("b".to_string())),
-        });
+        assert_eq!(
+            parse_expr("a != b"),
+            Expr::BinaryOp {
+                left: Box::new(Expr::Identifier("a".to_string())),
+                op: BinaryOp::NotEq,
+                right: Box::new(Expr::Identifier("b".to_string())),
+            }
+        );
     }
 
     #[test]
     fn parse_less_than() {
-        assert_eq!(parse_expr("a < b"), Expr::BinaryOp {
-            left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::Lt, right: Box::new(Expr::Identifier("b".to_string())),
-        });
+        assert_eq!(
+            parse_expr("a < b"),
+            Expr::BinaryOp {
+                left: Box::new(Expr::Identifier("a".to_string())),
+                op: BinaryOp::Lt,
+                right: Box::new(Expr::Identifier("b".to_string())),
+            }
+        );
     }
 
     #[test]
     fn parse_and_or() {
         // a and b or c → Or(And(a, b), c)  (and binds tighter than or)
-        assert_eq!(parse_expr("a and b or c"), Expr::BinaryOp {
-            left: Box::new(Expr::BinaryOp {
-                left: Box::new(Expr::Identifier("a".to_string())), op: BinaryOp::And, right: Box::new(Expr::Identifier("b".to_string())),
-            }),
-            op: BinaryOp::Or,
-            right: Box::new(Expr::Identifier("c".to_string())),
-        });
+        assert_eq!(
+            parse_expr("a and b or c"),
+            Expr::BinaryOp {
+                left: Box::new(Expr::BinaryOp {
+                    left: Box::new(Expr::Identifier("a".to_string())),
+                    op: BinaryOp::And,
+                    right: Box::new(Expr::Identifier("b".to_string())),
+                }),
+                op: BinaryOp::Or,
+                right: Box::new(Expr::Identifier("c".to_string())),
+            }
+        );
     }
 
     #[test]
     fn parse_not() {
-        assert_eq!(parse_expr("not x"), Expr::UnaryOp { op: UnaryOp::Not, operand: Box::new(Expr::Identifier("x".to_string())) });
+        assert_eq!(
+            parse_expr("not x"),
+            Expr::UnaryOp {
+                op: UnaryOp::Not,
+                operand: Box::new(Expr::Identifier("x".to_string()))
+            }
+        );
     }
 
     #[test]
     fn parse_is_expr() {
-        assert_eq!(parse_expr("result is NotFound"), Expr::Is {
-            expr: Box::new(Expr::Identifier("result".to_string())), type_name: "NotFound".to_string(),
-        });
+        assert_eq!(
+            parse_expr("result is NotFound"),
+            Expr::Is {
+                expr: Box::new(Expr::Identifier("result".to_string())),
+                type_name: "NotFound".to_string(),
+            }
+        );
     }
 
     #[test]
     fn parse_precedence_comparison_vs_arithmetic() {
         // a + 1 == b → Eq(Add(a, 1), b)
-        assert!(matches!(parse_expr("a + 1 == b"), Expr::BinaryOp { op: BinaryOp::Eq, .. }));
+        assert!(matches!(
+            parse_expr("a + 1 == b"),
+            Expr::BinaryOp {
+                op: BinaryOp::Eq,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn parse_simple_string() {
-        assert_eq!(parse_expr(r#""hello""#), Expr::StringLiteral(StringExpr::Simple("hello".to_string())));
+        assert_eq!(
+            parse_expr(r#""hello""#),
+            Expr::StringLiteral(StringExpr::Simple("hello".to_string()))
+        );
     }
 
     #[test]
     fn parse_interpolated_string() {
         let expr = parse_expr(r#""hello {name}""#);
-        assert!(matches!(expr, Expr::StringLiteral(StringExpr::Interpolated(_))));
+        assert!(matches!(
+            expr,
+            Expr::StringLiteral(StringExpr::Interpolated(_))
+        ));
         if let Expr::StringLiteral(StringExpr::Interpolated(parts)) = expr {
             assert_eq!(parts.len(), 2);
             assert_eq!(parts[0], StringPart::Literal("hello ".to_string()));
@@ -1452,12 +1614,18 @@ mod tests {
 
     #[test]
     fn parse_raw_string() {
-        assert_eq!(parse_expr(r#"raw"no {interp}""#), Expr::StringLiteral(StringExpr::Simple("no {interp}".to_string())));
+        assert_eq!(
+            parse_expr(r#"raw"no {interp}""#),
+            Expr::StringLiteral(StringExpr::Simple("no {interp}".to_string()))
+        );
     }
 
     #[test]
     fn parse_empty_string() {
-        assert_eq!(parse_expr(r#""""#), Expr::StringLiteral(StringExpr::Simple(String::new())));
+        assert_eq!(
+            parse_expr(r#""""#),
+            Expr::StringLiteral(StringExpr::Simple(String::new()))
+        );
     }
 
     // --- Pipeline tests ---
@@ -1478,7 +1646,9 @@ mod tests {
         let expr = parse_expr("users | filter where .active");
         if let Expr::Pipeline { steps, .. } = expr {
             assert!(matches!(&steps[0], PipelineStep::Filter { .. }));
-        } else { panic!("Expected Pipeline"); }
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
@@ -1486,7 +1656,9 @@ mod tests {
         let expr = parse_expr("users | map to .name");
         if let Expr::Pipeline { steps, .. } = expr {
             assert!(matches!(&steps[0], PipelineStep::Map { .. }));
-        } else { panic!("Expected Pipeline"); }
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
@@ -1495,8 +1667,12 @@ mod tests {
         if let Expr::Pipeline { steps, .. } = expr {
             if let PipelineStep::Sort { descending, .. } = &steps[0] {
                 assert!(!descending);
-            } else { panic!("Expected Sort"); }
-        } else { panic!("Expected Pipeline"); }
+            } else {
+                panic!("Expected Sort");
+            }
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
@@ -1505,16 +1681,23 @@ mod tests {
         if let Expr::Pipeline { steps, .. } = expr {
             if let PipelineStep::Sort { descending, .. } = &steps[0] {
                 assert!(descending);
-            } else { panic!("Expected Sort"); }
-        } else { panic!("Expected Pipeline"); }
+            } else {
+                panic!("Expected Sort");
+            }
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
     fn parse_multi_step_pipeline() {
-        let expr = parse_expr("users\n  | filter where .active\n  | map to .name\n  | sort by .name");
+        let expr =
+            parse_expr("users\n  | filter where .active\n  | map to .name\n  | sort by .name");
         if let Expr::Pipeline { steps, .. } = expr {
             assert_eq!(steps.len(), 3);
-        } else { panic!("Expected Pipeline"); }
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
@@ -1522,7 +1705,9 @@ mod tests {
         let expr = parse_expr("request | api_pipeline");
         if let Expr::Pipeline { steps, .. } = expr {
             assert!(matches!(&steps[0], PipelineStep::Expr(_)));
-        } else { panic!("Expected Pipeline"); }
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
@@ -1530,15 +1715,25 @@ mod tests {
         let expr = parse_expr("x | or default 1");
         if let Expr::Pipeline { steps, .. } = expr {
             assert!(matches!(&steps[0], PipelineStep::OrDefault { .. }));
-        } else { panic!("Expected Pipeline"); }
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
     fn parse_take_first() {
         let expr = parse_expr("users | take first 10");
         if let Expr::Pipeline { steps, .. } = expr {
-            assert!(matches!(&steps[0], PipelineStep::Take { kind: TakeKind::First, .. }));
-        } else { panic!("Expected Pipeline"); }
+            assert!(matches!(
+                &steps[0],
+                PipelineStep::Take {
+                    kind: TakeKind::First,
+                    ..
+                }
+            ));
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
@@ -1548,7 +1743,9 @@ mod tests {
             assert_eq!(steps.len(), 2);
             assert!(matches!(steps[0], PipelineStep::Flatten));
             assert!(matches!(steps[1], PipelineStep::Unique));
-        } else { panic!("Expected Pipeline"); }
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     // --- Control flow tests ---
@@ -1588,8 +1785,13 @@ mod tests {
         let input = "match x {\n  42 => true,\n  _ => false,\n}";
         let expr = parse_expr(input);
         if let Expr::Match { arms, .. } = &expr {
-            assert!(matches!(&arms[0].pattern, Pattern::Literal(Expr::IntLiteral(42))));
-        } else { panic!("Expected Match"); }
+            assert!(matches!(
+                &arms[0].pattern,
+                Pattern::Literal(Expr::IntLiteral(42))
+            ));
+        } else {
+            panic!("Expected Match");
+        }
     }
 
     // --- Type expression tests ---
@@ -1599,7 +1801,10 @@ mod tests {
         let mut lexer = Lexer::new("Int");
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens, "Int");
-        assert_eq!(parser.parse_type_expr().unwrap(), TypeExpr::Named("Int".to_string()));
+        assert_eq!(
+            parser.parse_type_expr().unwrap(),
+            TypeExpr::Named("Int".to_string())
+        );
     }
 
     #[test]
@@ -1607,10 +1812,13 @@ mod tests {
         let mut lexer = Lexer::new("List<User>");
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens, "List<User>");
-        assert_eq!(parser.parse_type_expr().unwrap(), TypeExpr::Generic {
-            name: "List".to_string(),
-            args: vec![TypeExpr::Named("User".to_string())],
-        });
+        assert_eq!(
+            parser.parse_type_expr().unwrap(),
+            TypeExpr::Generic {
+                name: "List".to_string(),
+                args: vec![TypeExpr::Named("User".to_string())],
+            }
+        );
     }
 
     #[test]
@@ -1618,7 +1826,10 @@ mod tests {
         let mut lexer = Lexer::new("Optional<String>");
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens, "Optional<String>");
-        assert_eq!(parser.parse_type_expr().unwrap(), TypeExpr::Optional(Box::new(TypeExpr::Named("String".to_string()))));
+        assert_eq!(
+            parser.parse_type_expr().unwrap(),
+            TypeExpr::Optional(Box::new(TypeExpr::Named("String".to_string())))
+        );
     }
 
     #[test]
@@ -1626,10 +1837,13 @@ mod tests {
         let mut lexer = Lexer::new("User or NotFound or DbError");
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens, "User or NotFound or DbError");
-        assert_eq!(parser.parse_type_expr().unwrap(), TypeExpr::Result {
-            ok: Box::new(TypeExpr::Named("User".to_string())),
-            errors: vec!["NotFound".to_string(), "DbError".to_string()],
-        });
+        assert_eq!(
+            parser.parse_type_expr().unwrap(),
+            TypeExpr::Result {
+                ok: Box::new(TypeExpr::Named("User".to_string())),
+                errors: vec!["NotFound".to_string(), "DbError".to_string()],
+            }
+        );
     }
 
     #[test]
@@ -1638,7 +1852,9 @@ mod tests {
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens, "Map<String, List<Int>>");
         let ty = parser.parse_type_expr().unwrap();
-        assert!(matches!(ty, TypeExpr::Generic { ref name, ref args } if name == "Map" && args.len() == 2));
+        assert!(
+            matches!(ty, TypeExpr::Generic { ref name, ref args } if name == "Map" && args.len() == 2)
+        );
     }
 
     // --- Statement tests ---
@@ -1647,25 +1863,43 @@ mod tests {
     fn parse_let_statement() {
         let prog = parse_program(r#"let name: String = "Vitalii""#);
         assert_eq!(prog.statements.len(), 1);
-        assert!(matches!(&prog.statements[0], Statement::Let { mutable: false, .. }));
+        assert!(matches!(
+            &prog.statements[0],
+            Statement::Let { mutable: false, .. }
+        ));
     }
 
     #[test]
     fn parse_var_statement() {
         let prog = parse_program("var counter: Int = 0");
-        assert!(matches!(&prog.statements[0], Statement::Let { mutable: true, .. }));
+        assert!(matches!(
+            &prog.statements[0],
+            Statement::Let { mutable: true, .. }
+        ));
     }
 
     #[test]
     fn parse_return_statement() {
         let prog = parse_program("return 42");
-        assert!(matches!(&prog.statements[0], Statement::Return { value: Some(_), condition: None }));
+        assert!(matches!(
+            &prog.statements[0],
+            Statement::Return {
+                value: Some(_),
+                condition: None
+            }
+        ));
     }
 
     #[test]
     fn parse_return_if() {
         let prog = parse_program("return NotFound if not user.active");
-        assert!(matches!(&prog.statements[0], Statement::Return { value: Some(_), condition: Some(_) }));
+        assert!(matches!(
+            &prog.statements[0],
+            Statement::Return {
+                value: Some(_),
+                condition: Some(_)
+            }
+        ));
     }
 
     #[test]
@@ -1673,34 +1907,53 @@ mod tests {
         let prog = parse_program("use models.user.User");
         if let Statement::Use { path } = &prog.statements[0] {
             assert_eq!(path, &["models", "user", "User"]);
-        } else { panic!("Expected Use"); }
+        } else {
+            panic!("Expected Use");
+        }
     }
 
     #[test]
     fn parse_ensure_as_expression_statement() {
         let prog = parse_program("ensure amount > 0");
-        assert!(matches!(&prog.statements[0], Statement::Expression(Expr::Ensure(_))));
+        assert!(matches!(
+            &prog.statements[0],
+            Statement::Expression(Expr::Ensure(_))
+        ));
     }
 
     // --- Function declaration tests ---
 
     #[test]
     fn parse_simple_fn() {
-        let prog = parse_program("intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}");
-        if let Statement::FnDecl { name, params, return_type, body, .. } = &prog.statements[0] {
+        let prog = parse_program(
+            "intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}",
+        );
+        if let Statement::FnDecl {
+            name,
+            params,
+            return_type,
+            body,
+            ..
+        } = &prog.statements[0]
+        {
             assert_eq!(name, "add");
             assert_eq!(params.len(), 2);
             assert!(return_type.is_some());
             assert_eq!(body.len(), 1);
-        } else { panic!("Expected FnDecl"); }
+        } else {
+            panic!("Expected FnDecl");
+        }
     }
 
     #[test]
     fn parse_fn_with_intent() {
-        let prog = parse_program("intent \"find user by ID\"\nfn find_user(id: ID) -> User {\n  id\n}");
+        let prog =
+            parse_program("intent \"find user by ID\"\nfn find_user(id: ID) -> User {\n  id\n}");
         if let Statement::FnDecl { intent, .. } = &prog.statements[0] {
             assert_eq!(intent.as_deref(), Some("find user by ID"));
-        } else { panic!("Expected FnDecl"); }
+        } else {
+            panic!("Expected FnDecl");
+        }
     }
 
     #[test]
@@ -1715,44 +1968,72 @@ mod tests {
 
     #[test]
     fn parse_fn_with_needs() {
-        let prog = parse_program("intent \"save user to database\"\nfn save(user: User) -> User needs db {\n  user\n}");
+        let prog = parse_program(
+            "intent \"save user to database\"\nfn save(user: User) -> User needs db {\n  user\n}",
+        );
         if let Statement::FnDecl { effects, .. } = &prog.statements[0] {
             assert_eq!(effects, &["db"]);
-        } else { panic!("Expected FnDecl"); }
+        } else {
+            panic!("Expected FnDecl");
+        }
     }
 
     #[test]
     fn parse_fn_with_error_types() {
-        let prog = parse_program("intent \"find user by ID\"\nfn find(id: ID) -> User or NotFound needs db {\n  id\n}");
-        if let Statement::FnDecl { error_types, return_type, .. } = &prog.statements[0] {
+        let prog = parse_program(
+            "intent \"find user by ID\"\nfn find(id: ID) -> User or NotFound needs db {\n  id\n}",
+        );
+        if let Statement::FnDecl {
+            error_types,
+            return_type,
+            ..
+        } = &prog.statements[0]
+        {
             assert!(return_type.is_some());
             assert_eq!(error_types, &["NotFound"]);
-        } else { panic!("Expected FnDecl"); }
+        } else {
+            panic!("Expected FnDecl");
+        }
     }
 
     #[test]
     fn parse_fn_no_params_no_return() {
         let prog = parse_program("intent \"greet the user\"\nfn greet() {\n  nothing\n}");
-        if let Statement::FnDecl { params, return_type, .. } = &prog.statements[0] {
+        if let Statement::FnDecl {
+            params,
+            return_type,
+            ..
+        } = &prog.statements[0]
+        {
             assert_eq!(params.len(), 0);
             assert!(return_type.is_none());
-        } else { panic!("Expected FnDecl"); }
+        } else {
+            panic!("Expected FnDecl");
+        }
     }
 
     #[test]
     fn parse_fn_needs_multiple_effects() {
-        let prog = parse_program("intent \"save user with multiple effects\"\nfn save(user: User) -> User needs db, time, rng {\n  user\n}");
+        let prog = parse_program(
+            "intent \"save user with multiple effects\"\nfn save(user: User) -> User needs db, time, rng {\n  user\n}",
+        );
         if let Statement::FnDecl { effects, .. } = &prog.statements[0] {
             assert_eq!(effects, &["db", "time", "rng"]);
-        } else { panic!("Expected FnDecl"); }
+        } else {
+            panic!("Expected FnDecl");
+        }
     }
 
     #[test]
     fn parse_fn_needs_single_effect() {
-        let prog = parse_program("intent \"save user to db\"\nfn save(user: User) -> User needs db {\n  user\n}");
+        let prog = parse_program(
+            "intent \"save user to db\"\nfn save(user: User) -> User needs db {\n  user\n}",
+        );
         if let Statement::FnDecl { effects, .. } = &prog.statements[0] {
             assert_eq!(effects, &["db"]);
-        } else { panic!("Expected FnDecl"); }
+        } else {
+            panic!("Expected FnDecl");
+        }
     }
 
     #[test]
@@ -1764,7 +2045,11 @@ mod tests {
         let mut parser = Parser::new(tokens, input);
         let err = parser.parse().unwrap_err();
         let msg = &err[0].message;
-        assert!(msg.contains("function"), "Error should mention 'function' context, got: {}", msg);
+        assert!(
+            msg.contains("function"),
+            "Error should mention 'function' context, got: {}",
+            msg
+        );
     }
 
     // --- Type declaration tests ---
@@ -1775,7 +2060,9 @@ mod tests {
         if let Statement::TypeDecl(TypeDecl::Struct { name, fields }) = &prog.statements[0] {
             assert_eq!(name, "User");
             assert_eq!(fields.len(), 2);
-        } else { panic!("Expected Struct TypeDecl"); }
+        } else {
+            panic!("Expected Struct TypeDecl");
+        }
     }
 
     #[test]
@@ -1785,7 +2072,9 @@ mod tests {
             assert_eq!(name, "Role");
             assert_eq!(variants.len(), 3);
             assert!(variants[0].fields.is_none());
-        } else { panic!("Expected Union TypeDecl"); }
+        } else {
+            panic!("Expected Union TypeDecl");
+        }
     }
 
     #[test]
@@ -1795,7 +2084,9 @@ mod tests {
             assert_eq!(variants.len(), 2);
             assert!(variants[0].fields.is_none());
             assert!(variants[1].fields.is_some());
-        } else { panic!("Expected Union TypeDecl"); }
+        } else {
+            panic!("Expected Union TypeDecl");
+        }
     }
 
     // --- Struct literal tests ---
@@ -1806,7 +2097,9 @@ mod tests {
         if let Expr::StructLiteral { name, fields } = &expr {
             assert_eq!(name.as_deref(), Some("User"));
             assert_eq!(fields.len(), 2);
-        } else { panic!("Expected StructLiteral"); }
+        } else {
+            panic!("Expected StructLiteral");
+        }
     }
 
     #[test]
@@ -1815,7 +2108,9 @@ mod tests {
         if let Expr::StructLiteral { fields, .. } = &expr {
             assert!(matches!(&fields[0], StructField::Spread(_)));
             assert!(matches!(&fields[1], StructField::Named { .. }));
-        } else { panic!("Expected StructLiteral"); }
+        } else {
+            panic!("Expected StructLiteral");
+        }
     }
 
     #[test]
@@ -1823,7 +2118,9 @@ mod tests {
         let expr = parse_expr("{ status: ok }");
         if let Expr::StructLiteral { name, .. } = &expr {
             assert!(name.is_none());
-        } else { panic!("Expected anonymous StructLiteral, got {:?}", expr); }
+        } else {
+            panic!("Expected anonymous StructLiteral, got {:?}", expr);
+        }
     }
 
     #[test]
@@ -1872,7 +2169,10 @@ fn is_admin(role: Role) -> Bool {
 }"#;
         let prog = parse_program(input);
         assert_eq!(prog.statements.len(), 2);
-        assert!(matches!(&prog.statements[0], Statement::TypeDecl(TypeDecl::Union { .. })));
+        assert!(matches!(
+            &prog.statements[0],
+            Statement::TypeDecl(TypeDecl::Union { .. })
+        ));
         assert!(matches!(&prog.statements[1], Statement::FnDecl { .. }));
     }
 
@@ -1896,11 +2196,20 @@ fn withdraw(account: Account, amount: Int) -> Account or InsufficientFunds {
   Account { ...account, balance: account.balance - amount }
 }"#;
         let prog = parse_program(input);
-        if let Statement::FnDecl { body, error_types, .. } = &prog.statements[0] {
+        if let Statement::FnDecl {
+            body, error_types, ..
+        } = &prog.statements[0]
+        {
             assert_eq!(error_types, &["InsufficientFunds"]);
             assert!(body.len() >= 3);
             assert!(matches!(&body[0], Statement::Expression(Expr::Ensure(_))));
-            assert!(matches!(&body[1], Statement::Return { condition: Some(_), .. }));
+            assert!(matches!(
+                &body[1],
+                Statement::Return {
+                    condition: Some(_),
+                    ..
+                }
+            ));
         } else {
             panic!("Expected FnDecl");
         }
@@ -1926,7 +2235,13 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
   }
 }"#;
         let prog = parse_program(input);
-        if let Statement::FnDecl { intent, effects, body, .. } = &prog.statements[0] {
+        if let Statement::FnDecl {
+            intent,
+            effects,
+            body,
+            ..
+        } = &prog.statements[0]
+        {
             assert_eq!(intent.as_deref(), Some("create a new user"));
             assert_eq!(effects, &["db", "time", "rng"]);
             assert!(body.len() >= 2); // let + struct literal
@@ -2043,7 +2358,8 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
 
     #[test]
     fn parse_simple_route() {
-        let input = "route GET \"/health\" {\n  intent \"health check\"\n  respond 200 with nothing\n}";
+        let input =
+            "route GET \"/health\" {\n  intent \"health check\"\n  respond 200 with nothing\n}";
         let prog = parse_program(input);
         assert!(matches!(&prog.statements[0], Statement::Route { method, .. } if method == "GET"));
     }
@@ -2054,7 +2370,9 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
         let prog = parse_program(input);
         if let Statement::Route { effects, .. } = &prog.statements[0] {
             assert_eq!(effects, &["db", "auth"]);
-        } else { panic!("Expected Route"); }
+        } else {
+            panic!("Expected Route");
+        }
     }
 
     #[test]
@@ -2078,23 +2396,33 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
         let expr = parse_expr("x | on success: respond 200 with .");
         if let Expr::Pipeline { steps, .. } = &expr {
             assert!(matches!(&steps[0], PipelineStep::OnSuccess { .. }));
-        } else { panic!("Expected Pipeline"); }
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
     fn parse_on_error_pipeline() {
         let expr = parse_expr("x | on NotFound: respond 404 with nothing");
         if let Expr::Pipeline { steps, .. } = &expr {
-            assert!(matches!(&steps[0], PipelineStep::OnError { variant, .. } if variant == "NotFound"));
-        } else { panic!("Expected Pipeline"); }
+            assert!(
+                matches!(&steps[0], PipelineStep::OnError { variant, .. } if variant == "NotFound")
+            );
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
     fn parse_validate_as_pipeline() {
         let expr = parse_expr("x | validate as NewUser");
         if let Expr::Pipeline { steps, .. } = &expr {
-            assert!(matches!(&steps[0], PipelineStep::ValidateAs { type_name } if type_name == "NewUser"));
-        } else { panic!("Expected Pipeline"); }
+            assert!(
+                matches!(&steps[0], PipelineStep::ValidateAs { type_name } if type_name == "NewUser")
+            );
+        } else {
+            panic!("Expected Pipeline");
+        }
     }
 
     #[test]
@@ -2109,12 +2437,16 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
         let prog = parse_program(input);
         if let Statement::Route { body, .. } = &prog.statements[0] {
             assert!(!body.is_empty());
-        } else { panic!("Expected Route"); }
+        } else {
+            panic!("Expected Route");
+        }
     }
 
     #[test]
     fn parse_app() {
         let prog = parse_program("app UserService {\n  port: 8080,\n}");
-        assert!(matches!(&prog.statements[0], Statement::App { name, port } if name == "UserService" && *port == 8080));
+        assert!(
+            matches!(&prog.statements[0], Statement::App { name, port } if name == "UserService" && *port == 8080)
+        );
     }
 }

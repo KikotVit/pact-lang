@@ -1,10 +1,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::parser::ast::{BinaryOp, Expr, MatchArm, Pattern, PipelineStep, Program, Statement, StringExpr, StringPart, StructField, TakeKind, UnaryOp};
 use super::environment::Environment;
 use super::errors::RuntimeError;
 use super::value::Value;
+use crate::parser::ast::{
+    BinaryOp, Expr, MatchArm, Pattern, PipelineStep, Program, Statement, StringExpr, StringPart,
+    StructField, TakeKind, UnaryOp,
+};
 
 /// Result of evaluating a statement: either a normal value or an early return.
 pub enum StmtResult {
@@ -85,10 +88,7 @@ impl Interpreter {
                 Ok(StmtResult::Value(val))
             }
             Statement::FnDecl {
-                name,
-                params,
-                body,
-                ..
+                name, params, body, ..
             } => {
                 let func = Value::Function {
                     name: name.clone(),
@@ -123,19 +123,28 @@ impl Interpreter {
                             }
                         }
                         // `return BadRequest { message: "..." }` — struct literal with uppercase name → Error
-                        Expr::StructLiteral { name: Some(sname), fields: sfields }
-                            if sname.starts_with(char::is_uppercase) =>
-                        {
+                        Expr::StructLiteral {
+                            name: Some(sname),
+                            fields: sfields,
+                        } if sname.starts_with(char::is_uppercase) => {
                             let mut field_map = HashMap::new();
                             for f in sfields {
-                                if let StructField::Named { name: fname, value: fval } = f {
+                                if let StructField::Named {
+                                    name: fname,
+                                    value: fval,
+                                } = f
+                                {
                                     let v = self.eval_expr(fval, env)?;
                                     field_map.insert(fname.clone(), v);
                                 }
                             }
                             Value::Error {
                                 variant: sname.clone(),
-                                fields: if field_map.is_empty() { None } else { Some(field_map) },
+                                fields: if field_map.is_empty() {
+                                    None
+                                } else {
+                                    Some(field_map)
+                                },
                             }
                         }
                         _ => self.eval_expr(val_expr, env)?,
@@ -164,12 +173,21 @@ impl Interpreter {
                 if val.is_truthy() {
                     Ok(StmtResult::Value(Value::Nothing))
                 } else {
-                    let mut err = self.error(&format!("Assertion failed: expression evaluated to {}", val));
+                    let mut err = self.error(&format!(
+                        "Assertion failed: expression evaluated to {}",
+                        val
+                    ));
                     err.hint = Some("Check that the condition is correct".to_string());
                     Err(err)
                 }
             }
-            Statement::Route { method, path, intent, effects, body } => {
+            Statement::Route {
+                method,
+                path,
+                intent,
+                effects,
+                body,
+            } => {
                 self.routes.push(StoredRoute {
                     method: method.clone(),
                     path: path.clone(),
@@ -186,11 +204,7 @@ impl Interpreter {
         }
     }
 
-    pub fn eval_expr(
-        &mut self,
-        expr: &Expr,
-        env: &mut Environment,
-    ) -> Result<Value, RuntimeError> {
+    pub fn eval_expr(&mut self, expr: &Expr, env: &mut Environment) -> Result<Value, RuntimeError> {
         match expr {
             Expr::IntLiteral(n) => Ok(Value::Int(*n)),
             Expr::FloatLiteral(n) => Ok(Value::Float(*n)),
@@ -224,26 +238,17 @@ impl Interpreter {
             Expr::FieldAccess { object, field } => {
                 let obj = self.eval_expr(object, env)?;
                 match &obj {
-                    Value::Struct { fields, .. } => {
-                        fields.get(field).cloned().ok_or_else(|| {
-                            self.error(&format!(
-                                "Struct has no field '{}'",
-                                field
-                            ))
-                        })
+                    Value::Struct { fields, .. } => fields
+                        .get(field)
+                        .cloned()
+                        .ok_or_else(|| self.error(&format!("Struct has no field '{}'", field))),
+                    Value::Effect { methods, .. } => methods
+                        .get(field)
+                        .cloned()
+                        .ok_or_else(|| self.error(&format!("Effect has no method '{}'", field))),
+                    _ => {
+                        Err(self.error(&format!("Cannot access field on {} type", obj.type_name())))
                     }
-                    Value::Effect { methods, .. } => {
-                        methods.get(field).cloned().ok_or_else(|| {
-                            self.error(&format!(
-                                "Effect has no method '{}'",
-                                field
-                            ))
-                        })
-                    }
-                    _ => Err(self.error(&format!(
-                        "Cannot access field on {} type",
-                        obj.type_name()
-                    ))),
                 }
             }
             Expr::DotShorthand(parts) => {
@@ -263,10 +268,7 @@ impl Interpreter {
                     val = match &val {
                         Value::Struct { fields, .. } => {
                             fields.get(field).cloned().ok_or_else(|| {
-                                self.error(&format!(
-                                    "Struct has no field '{}'",
-                                    field
-                                ))
+                                self.error(&format!("Struct has no field '{}'", field))
                             })?
                         }
                         _ => {
@@ -321,9 +323,7 @@ impl Interpreter {
                         ))),
                     },
                     BinaryOp::Div => match (&left_val, &right_val) {
-                        (Value::Int(_), Value::Int(0)) => {
-                            Err(self.error("Division by zero"))
-                        }
+                        (Value::Int(_), Value::Int(0)) => Err(self.error("Division by zero")),
                         (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
                         (Value::Float(_), Value::Float(b)) if *b == 0.0 => {
                             Err(self.error("Division by zero"))
@@ -333,9 +333,7 @@ impl Interpreter {
                             Err(self.error("Division by zero"))
                         }
                         (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
-                        (Value::Float(_), Value::Int(0)) => {
-                            Err(self.error("Division by zero"))
-                        }
+                        (Value::Float(_), Value::Int(0)) => Err(self.error("Division by zero")),
                         (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
                         _ => Err(self.error(&format!(
                             "Cannot divide {} by {}",
@@ -389,12 +387,8 @@ impl Interpreter {
                             right_val.type_name()
                         ))),
                     },
-                    BinaryOp::And => {
-                        Ok(Value::Bool(left_val.is_truthy() && right_val.is_truthy()))
-                    }
-                    BinaryOp::Or => {
-                        Ok(Value::Bool(left_val.is_truthy() || right_val.is_truthy()))
-                    }
+                    BinaryOp::And => Ok(Value::Bool(left_val.is_truthy() && right_val.is_truthy())),
+                    BinaryOp::Or => Ok(Value::Bool(left_val.is_truthy() || right_val.is_truthy())),
                 }
             }
             Expr::UnaryOp { op, operand } => {
@@ -403,44 +397,29 @@ impl Interpreter {
                     UnaryOp::Neg => match val {
                         Value::Int(n) => Ok(Value::Int(-n)),
                         Value::Float(n) => Ok(Value::Float(-n)),
-                        _ => Err(self.error(&format!(
-                            "Cannot negate {} value",
-                            val.type_name()
-                        ))),
+                        _ => Err(self.error(&format!("Cannot negate {} value", val.type_name()))),
                     },
                     UnaryOp::Not => match val {
                         Value::Bool(b) => Ok(Value::Bool(!b)),
-                        _ => Err(self.error(&format!(
-                            "Cannot apply 'not' to {} value",
-                            val.type_name()
-                        ))),
+                        _ => {
+                            Err(self
+                                .error(&format!("Cannot apply 'not' to {} value", val.type_name())))
+                        }
                     },
                 }
             }
-            Expr::ErrorPropagation(inner) => {
-                self.eval_error_propagation(inner, env)
-            }
-            Expr::FnCall { callee, args } => {
-                self.eval_fn_call(callee, args, env)
-            }
-            Expr::Pipeline { .. } => {
-                self.eval_pipeline(expr, env)
-            }
-            Expr::If { condition, then_body, else_body } => {
-                self.eval_if(condition, then_body, else_body, env)
-            }
-            Expr::Match { subject, arms } => {
-                self.eval_match(subject, arms, env)
-            }
-            Expr::Block(stmts) => {
-                self.eval_block(stmts, env)
-            }
-            Expr::StructLiteral { name, fields } => {
-                self.eval_struct_literal(name, fields, env)
-            }
-            Expr::Ensure(predicate) => {
-                self.eval_ensure(predicate, env)
-            }
+            Expr::ErrorPropagation(inner) => self.eval_error_propagation(inner, env),
+            Expr::FnCall { callee, args } => self.eval_fn_call(callee, args, env),
+            Expr::Pipeline { .. } => self.eval_pipeline(expr, env),
+            Expr::If {
+                condition,
+                then_body,
+                else_body,
+            } => self.eval_if(condition, then_body, else_body, env),
+            Expr::Match { subject, arms } => self.eval_match(subject, arms, env),
+            Expr::Block(stmts) => self.eval_block(stmts, env),
+            Expr::StructLiteral { name, fields } => self.eval_struct_literal(name, fields, env),
+            Expr::Ensure(predicate) => self.eval_ensure(predicate, env),
             Expr::Is { expr, type_name } => {
                 let val = self.eval_expr(expr, env)?;
                 let result = match &val {
@@ -459,14 +438,21 @@ impl Interpreter {
                 // For redirects, extract location to top level
                 if let Value::Int(code) = &status_val {
                     if matches!(code, 301 | 302 | 307 | 308) {
-                        if let Value::Struct { fields: body_fields, .. } = &body_val {
+                        if let Value::Struct {
+                            fields: body_fields,
+                            ..
+                        } = &body_val
+                        {
                             if let Some(loc) = body_fields.get("location") {
                                 fields.insert("location".to_string(), loc.clone());
                             }
                         }
                     }
                 }
-                Ok(Value::Struct { type_name: "Response".to_string(), fields })
+                Ok(Value::Struct {
+                    type_name: "Response".to_string(),
+                    fields,
+                })
             }
         }
     }
@@ -515,13 +501,8 @@ impl Interpreter {
                 }
                 Ok(result)
             }
-            Value::BuiltinFn { name } => {
-                self.call_builtin(&name, arg_vals)
-            }
-            other => Err(self.error(&format!(
-                "Cannot call {} as function",
-                other.type_name()
-            ))),
+            Value::BuiltinFn { name } => self.call_builtin(&name, arg_vals),
+            other => Err(self.error(&format!("Cannot call {} as function", other.type_name()))),
         }
     }
 
@@ -579,13 +560,13 @@ impl Interpreter {
                     let key = self.eval_expr(field, &mut child_env)?;
                     keyed.push((key, item));
                 }
-                keyed.sort_by(|(a, _), (b, _)| {
-                    match (a, b) {
-                        (Value::Int(x), Value::Int(y)) => x.cmp(y),
-                        (Value::Float(x), Value::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-                        (Value::String(x), Value::String(y)) => x.cmp(y),
-                        _ => std::cmp::Ordering::Equal,
+                keyed.sort_by(|(a, _), (b, _)| match (a, b) {
+                    (Value::Int(x), Value::Int(y)) => x.cmp(y),
+                    (Value::Float(x), Value::Float(y)) => {
+                        x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
                     }
+                    (Value::String(x), Value::String(y)) => x.cmp(y),
+                    _ => std::cmp::Ordering::Equal,
                 });
                 if *descending {
                     keyed.reverse();
@@ -617,10 +598,11 @@ impl Interpreter {
                             float_sum += f;
                             has_float = true;
                         }
-                        _ => return Err(self.error(&format!(
-                            "Cannot sum {} values",
-                            item.type_name()
-                        ))),
+                        _ => {
+                            return Err(
+                                self.error(&format!("Cannot sum {} values", item.type_name()))
+                            );
+                        }
                     }
                 }
                 if has_float {
@@ -773,20 +755,15 @@ impl Interpreter {
                 match current {
                     Value::Ok(v) => Ok(*v),
                     Value::Error { variant, .. } => {
-                        Err(self.error(&format!(
-                            "Expected success but got Error.{}",
-                            variant
-                        )))
+                        Err(self.error(&format!("Expected success but got Error.{}", variant)))
                     }
                     other => Ok(other), // pass through non-Result values
                 }
             }
-            PipelineStep::OrDefault { value } => {
-                match current {
-                    Value::Nothing => self.eval_expr(value, env),
-                    other => Ok(other),
-                }
-            }
+            PipelineStep::OrDefault { value } => match current {
+                Value::Nothing => self.eval_expr(value, env),
+                other => Ok(other),
+            },
             PipelineStep::OnSuccess { body } => {
                 match &current {
                     Value::Ok(inner) => {
@@ -886,7 +863,7 @@ impl Interpreter {
         let value = args[1].clone();
         self.db_storage
             .entry(table_name)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(value.clone());
         Ok(value)
     }
@@ -899,7 +876,11 @@ impl Interpreter {
             Value::String(s) => s.clone(),
             _ => return Err(self.error("db.query argument must be a String table name")),
         };
-        let items = self.db_storage.get(&table_name).cloned().unwrap_or_default();
+        let items = self
+            .db_storage
+            .get(&table_name)
+            .cloned()
+            .unwrap_or_default();
         Ok(Value::List(items))
     }
 
@@ -925,7 +906,9 @@ impl Interpreter {
         self.rng_counter += 1;
         let seed = self.rng_seed.unwrap_or(42);
         // Simple hash-based hex generation from seed+counter
-        let mut value = seed.wrapping_mul(6364136223846793005).wrapping_add(self.rng_counter as u64);
+        let mut value = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(self.rng_counter);
         let mut hex = String::with_capacity(length);
         for _ in 0..length {
             value = value.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -939,49 +922,165 @@ impl Interpreter {
     pub fn setup_test_effects(&mut self) {
         // db effect with insert, query, and memory constructor
         let mut db_methods = HashMap::new();
-        db_methods.insert("insert".to_string(), Value::BuiltinFn { name: "db.insert".to_string() });
-        db_methods.insert("query".to_string(), Value::BuiltinFn { name: "db.query".to_string() });
-        db_methods.insert("memory".to_string(), Value::BuiltinFn { name: "db.memory".to_string() });
-        self.global.bind("db".to_string(), Value::Effect { name: "db".to_string(), methods: db_methods }, false);
+        db_methods.insert(
+            "insert".to_string(),
+            Value::BuiltinFn {
+                name: "db.insert".to_string(),
+            },
+        );
+        db_methods.insert(
+            "query".to_string(),
+            Value::BuiltinFn {
+                name: "db.query".to_string(),
+            },
+        );
+        db_methods.insert(
+            "memory".to_string(),
+            Value::BuiltinFn {
+                name: "db.memory".to_string(),
+            },
+        );
+        self.global.bind(
+            "db".to_string(),
+            Value::Effect {
+                name: "db".to_string(),
+                methods: db_methods,
+            },
+            false,
+        );
 
         // time effect with now and fixed constructor
         let mut time_methods = HashMap::new();
-        time_methods.insert("now".to_string(), Value::BuiltinFn { name: "time.now".to_string() });
-        time_methods.insert("fixed".to_string(), Value::BuiltinFn { name: "time.fixed".to_string() });
-        self.global.bind("time".to_string(), Value::Effect { name: "time".to_string(), methods: time_methods }, false);
+        time_methods.insert(
+            "now".to_string(),
+            Value::BuiltinFn {
+                name: "time.now".to_string(),
+            },
+        );
+        time_methods.insert(
+            "fixed".to_string(),
+            Value::BuiltinFn {
+                name: "time.fixed".to_string(),
+            },
+        );
+        self.global.bind(
+            "time".to_string(),
+            Value::Effect {
+                name: "time".to_string(),
+                methods: time_methods,
+            },
+            false,
+        );
 
         // rng effect with uuid, hex, and deterministic constructor
         let mut rng_methods = HashMap::new();
-        rng_methods.insert("uuid".to_string(), Value::BuiltinFn { name: "rng.uuid".to_string() });
-        rng_methods.insert("hex".to_string(), Value::BuiltinFn { name: "rng.hex".to_string() });
-        rng_methods.insert("deterministic".to_string(), Value::BuiltinFn { name: "rng.deterministic".to_string() });
-        self.global.bind("rng".to_string(), Value::Effect { name: "rng".to_string(), methods: rng_methods }, false);
+        rng_methods.insert(
+            "uuid".to_string(),
+            Value::BuiltinFn {
+                name: "rng.uuid".to_string(),
+            },
+        );
+        rng_methods.insert(
+            "hex".to_string(),
+            Value::BuiltinFn {
+                name: "rng.hex".to_string(),
+            },
+        );
+        rng_methods.insert(
+            "deterministic".to_string(),
+            Value::BuiltinFn {
+                name: "rng.deterministic".to_string(),
+            },
+        );
+        self.global.bind(
+            "rng".to_string(),
+            Value::Effect {
+                name: "rng".to_string(),
+                methods: rng_methods,
+            },
+            false,
+        );
 
         // list builtin
-        self.global.bind("list".to_string(), Value::BuiltinFn { name: "list".to_string() }, false);
+        self.global.bind(
+            "list".to_string(),
+            Value::BuiltinFn {
+                name: "list".to_string(),
+            },
+            false,
+        );
     }
 
     fn make_db_effect(&self) -> Value {
         let mut methods = HashMap::new();
-        methods.insert("insert".to_string(), Value::BuiltinFn { name: "db.insert".to_string() });
-        methods.insert("query".to_string(), Value::BuiltinFn { name: "db.query".to_string() });
-        methods.insert("memory".to_string(), Value::BuiltinFn { name: "db.memory".to_string() });
-        Value::Effect { name: "db".to_string(), methods }
+        methods.insert(
+            "insert".to_string(),
+            Value::BuiltinFn {
+                name: "db.insert".to_string(),
+            },
+        );
+        methods.insert(
+            "query".to_string(),
+            Value::BuiltinFn {
+                name: "db.query".to_string(),
+            },
+        );
+        methods.insert(
+            "memory".to_string(),
+            Value::BuiltinFn {
+                name: "db.memory".to_string(),
+            },
+        );
+        Value::Effect {
+            name: "db".to_string(),
+            methods,
+        }
     }
 
     fn make_time_effect(&self) -> Value {
         let mut methods = HashMap::new();
-        methods.insert("now".to_string(), Value::BuiltinFn { name: "time.now".to_string() });
-        methods.insert("fixed".to_string(), Value::BuiltinFn { name: "time.fixed".to_string() });
-        Value::Effect { name: "time".to_string(), methods }
+        methods.insert(
+            "now".to_string(),
+            Value::BuiltinFn {
+                name: "time.now".to_string(),
+            },
+        );
+        methods.insert(
+            "fixed".to_string(),
+            Value::BuiltinFn {
+                name: "time.fixed".to_string(),
+            },
+        );
+        Value::Effect {
+            name: "time".to_string(),
+            methods,
+        }
     }
 
     fn make_rng_effect(&self) -> Value {
         let mut methods = HashMap::new();
-        methods.insert("uuid".to_string(), Value::BuiltinFn { name: "rng.uuid".to_string() });
-        methods.insert("hex".to_string(), Value::BuiltinFn { name: "rng.hex".to_string() });
-        methods.insert("deterministic".to_string(), Value::BuiltinFn { name: "rng.deterministic".to_string() });
-        Value::Effect { name: "rng".to_string(), methods }
+        methods.insert(
+            "uuid".to_string(),
+            Value::BuiltinFn {
+                name: "rng.uuid".to_string(),
+            },
+        );
+        methods.insert(
+            "hex".to_string(),
+            Value::BuiltinFn {
+                name: "rng.hex".to_string(),
+            },
+        );
+        methods.insert(
+            "deterministic".to_string(),
+            Value::BuiltinFn {
+                name: "rng.deterministic".to_string(),
+            },
+        );
+        Value::Effect {
+            name: "rng".to_string(),
+            methods,
+        }
     }
 
     // --- If/else ---
@@ -1085,7 +1184,10 @@ impl Interpreter {
                 }
                 StructField::Spread(expr) => {
                     let val = self.eval_expr(expr, env)?;
-                    if let Value::Struct { fields: src_fields, .. } = val {
+                    if let Value::Struct {
+                        fields: src_fields, ..
+                    } = val
+                    {
                         for (k, v) in src_fields {
                             // Only insert if not already set by an explicit field
                             // (spread fields come first, explicit fields override)
@@ -1181,12 +1283,7 @@ impl Interpreter {
     /// Uses line 1, column 1, and the first source line as defaults
     /// since the AST doesn't carry position information.
     fn error(&self, message: &str) -> RuntimeError {
-        let source_line = self
-            .source
-            .lines()
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let source_line = self.source.lines().next().unwrap_or("").to_string();
         RuntimeError {
             line: 1,
             column: 1,
@@ -1236,9 +1333,8 @@ impl Interpreter {
         } else {
             // Read, lex, parse, eval the module file
             let source = std::fs::read_to_string(&file_path).map_err(|e| {
-                let mut err = self.error(
-                    &format!("Cannot import '{}': {}", file_path.display(), e),
-                );
+                let mut err =
+                    self.error(&format!("Cannot import '{}': {}", file_path.display(), e));
                 err.hint = Some(format!("File path resolved from: use {}", path.join(".")));
                 err
             })?;
@@ -1250,7 +1346,11 @@ impl Interpreter {
 
             let mut parser = crate::parser::Parser::new(tokens, &source);
             let program = parser.parse().map_err(|errors| {
-                self.error(&format!("Parse error in '{}': {}", file_path.display(), errors[0]))
+                self.error(&format!(
+                    "Parse error in '{}': {}",
+                    file_path.display(),
+                    errors[0]
+                ))
             })?;
 
             // Eval the module in a fresh environment
@@ -1263,7 +1363,8 @@ impl Interpreter {
             self.source = old_source;
 
             // Cache
-            self.module_cache.insert(file_path.clone(), module_env.clone());
+            self.module_cache
+                .insert(file_path.clone(), module_env.clone());
             module_env
         };
 
@@ -1282,15 +1383,21 @@ impl Interpreter {
             self.global.bind(symbol_name.clone(), value.clone(), false);
             Ok(())
         } else {
-            Err(self.error(
-                &format!("Symbol '{}' not found in module '{}'", symbol_name, file_path.display()),
-            ))
+            Err(self.error(&format!(
+                "Symbol '{}' not found in module '{}'",
+                symbol_name,
+                file_path.display()
+            )))
         }
     }
 
     // --- Route execution ---
 
-    pub fn execute_route(&mut self, route: &StoredRoute, request: Value) -> Result<Value, RuntimeError> {
+    pub fn execute_route(
+        &mut self,
+        route: &StoredRoute,
+        request: Value,
+    ) -> Result<Value, RuntimeError> {
         let mut env = Environment::with_parent(self.global.clone());
         env.bind("request".to_string(), request, false);
 
@@ -1323,7 +1430,9 @@ impl Interpreter {
         for stmt in &stmts {
             match stmt {
                 Statement::TestBlock { .. } => {} // skip tests in first pass
-                _ => { let _ = self.eval_statement(stmt, &mut env); }
+                _ => {
+                    let _ = self.eval_statement(stmt, &mut env);
+                }
             }
         }
 
@@ -1547,17 +1656,32 @@ mod tests {
 
     #[test]
     fn eval_simple_function() {
-        assert_eq!(eval("intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\nadd(1, 2)"), Value::Int(3));
+        assert_eq!(
+            eval(
+                "intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\nadd(1, 2)"
+            ),
+            Value::Int(3)
+        );
     }
 
     #[test]
     fn eval_function_multiple_stmts() {
-        assert_eq!(eval("intent \"double a number\"\nfn double(x: Int) -> Int {\n  let r: Int = x * 2\n  r\n}\ndouble(5)"), Value::Int(10));
+        assert_eq!(
+            eval(
+                "intent \"double a number\"\nfn double(x: Int) -> Int {\n  let r: Int = x * 2\n  r\n}\ndouble(5)"
+            ),
+            Value::Int(10)
+        );
     }
 
     #[test]
     fn eval_nested_calls() {
-        assert_eq!(eval("intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\nintent \"double a number\"\nfn double(x: Int) -> Int {\n  add(x, x)\n}\ndouble(3)"), Value::Int(6));
+        assert_eq!(
+            eval(
+                "intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\nintent \"double a number\"\nfn double(x: Int) -> Int {\n  add(x, x)\n}\ndouble(3)"
+            ),
+            Value::Int(6)
+        );
     }
 
     #[test]
@@ -1588,7 +1712,10 @@ mod tests {
 
     #[test]
     fn eval_match_literal() {
-        assert_eq!(eval("match 1 {\n  1 => \"one\",\n  _ => \"other\",\n}"), Value::String("one".to_string()));
+        assert_eq!(
+            eval("match 1 {\n  1 => \"one\",\n  _ => \"other\",\n}"),
+            Value::String("one".to_string())
+        );
     }
 
     #[test]
@@ -1650,7 +1777,13 @@ mod tests {
         let mut parser = Parser::new(tokens, input);
         let program = parser.parse().unwrap();
         let mut interp = Interpreter::new(input);
-        interp.global.bind("list".to_string(), Value::BuiltinFn { name: "list".to_string() }, false);
+        interp.global.bind(
+            "list".to_string(),
+            Value::BuiltinFn {
+                name: "list".to_string(),
+            },
+            false,
+        );
         interp.interpret(&program).unwrap()
     }
 
@@ -1680,7 +1813,12 @@ mod tests {
     fn eval_pipeline_flatten() {
         assert_eq!(
             eval_with_list("list(list(1, 2), list(3, 4)) | flatten"),
-            Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)]),
+            Value::List(vec![
+                Value::Int(1),
+                Value::Int(2),
+                Value::Int(3),
+                Value::Int(4)
+            ]),
         );
     }
 
@@ -1749,18 +1887,12 @@ mod tests {
 
     #[test]
     fn eval_pipeline_sum_float() {
-        assert_eq!(
-            eval_with_list("list(1.5, 2.5) | sum"),
-            Value::Float(4.0),
-        );
+        assert_eq!(eval_with_list("list(1.5, 2.5) | sum"), Value::Float(4.0),);
     }
 
     #[test]
     fn eval_pipeline_sum_empty() {
-        assert_eq!(
-            eval_with_list("list() | sum"),
-            Value::Int(0),
-        );
+        assert_eq!(eval_with_list("list() | sum"), Value::Int(0),);
     }
 
     // Task 8: Builtin functions and effect stubs
@@ -1775,10 +1907,7 @@ mod tests {
 
     #[test]
     fn eval_list_empty() {
-        assert_eq!(
-            eval_with_list("list()"),
-            Value::List(vec![]),
-        );
+        assert_eq!(eval_with_list("list()"), Value::List(vec![]),);
     }
 
     #[test]
@@ -1801,7 +1930,9 @@ mod tests {
     fn eval_rng_uuid_increments() {
         // Two calls should produce different UUIDs
         assert_eq!(
-            eval_with_effects("let a: String = rng.uuid()\nlet b: String = rng.uuid()\n\"{a},{b}\""),
+            eval_with_effects(
+                "let a: String = rng.uuid()\nlet b: String = rng.uuid()\n\"{a},{b}\""
+            ),
             Value::String("uuid-42-1,uuid-42-2".to_string()),
         );
     }
@@ -1809,7 +1940,9 @@ mod tests {
     #[test]
     fn eval_db_insert_and_query() {
         assert_eq!(
-            eval_with_effects("db.insert(\"users\", User { name: \"Alice\" })\ndb.query(\"users\") | count"),
+            eval_with_effects(
+                "db.insert(\"users\", User { name: \"Alice\" })\ndb.query(\"users\") | count"
+            ),
             Value::Int(1),
         );
     }
@@ -1834,7 +1967,12 @@ mod tests {
 
     #[test]
     fn integration_simple_function() {
-        assert_eq!(eval("intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\nadd(3, 4)"), Value::Int(7));
+        assert_eq!(
+            eval(
+                "intent \"add two numbers\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\nadd(3, 4)"
+            ),
+            Value::Int(7)
+        );
     }
 
     #[test]
@@ -1877,7 +2015,8 @@ describe(1)"#;
 
     #[test]
     fn integration_string_interpolation() {
-        let input = "let name: String = \"PACT\"\nlet version: Int = 1\n\"Welcome to {name} v{version}\"";
+        let input =
+            "let name: String = \"PACT\"\nlet version: Int = 1\n\"Welcome to {name} v{version}\"";
         assert_eq!(eval(input), Value::String("Welcome to PACT v1".to_string()));
     }
 
@@ -1914,7 +2053,10 @@ user.address.city"#;
     #[test]
     fn integration_effects_time() {
         let input = "intent \"get current time\"\nfn get_time() -> String needs time {\n  time.now()\n}\nget_time()";
-        assert_eq!(eval_with_effects(input), Value::String("2026-04-02T12:00:00Z".to_string()));
+        assert_eq!(
+            eval_with_effects(input),
+            Value::String("2026-04-02T12:00:00Z".to_string())
+        );
     }
 
     #[test]
@@ -1989,7 +2131,13 @@ user.address.city"#;
         let results = interp.run_tests(&program);
         assert_eq!(results.len(), 1);
         assert!(!results[0].passed);
-        assert!(results[0].error.as_ref().unwrap().contains("Assertion failed"));
+        assert!(
+            results[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("Assertion failed")
+        );
     }
 
     #[test]
@@ -2159,7 +2307,9 @@ test "add works" {
         if let Value::Struct { type_name, fields } = &result {
             assert_eq!(type_name, "Response");
             assert_eq!(fields.get("status"), Some(&Value::Int(200)));
-        } else { panic!("Expected Response struct"); }
+        } else {
+            panic!("Expected Response struct");
+        }
     }
 
     #[test]
@@ -2169,7 +2319,9 @@ test "add works" {
             assert_eq!(type_name, "Response");
             assert_eq!(fields.get("status"), Some(&Value::Int(201)));
             assert!(matches!(fields.get("body"), Some(Value::Struct { .. })));
-        } else { panic!("Expected Response struct"); }
+        } else {
+            panic!("Expected Response struct");
+        }
     }
 
     #[test]
@@ -2199,12 +2351,19 @@ test "add works" {
         let mut req_fields = std::collections::HashMap::new();
         req_fields.insert("method".to_string(), Value::String("GET".to_string()));
         req_fields.insert("path".to_string(), Value::String("/health".to_string()));
-        let request = Value::Struct { type_name: "Request".to_string(), fields: req_fields };
+        let request = Value::Struct {
+            type_name: "Request".to_string(),
+            fields: req_fields,
+        };
 
-        let response = interp.execute_route(&interp.routes[0].clone(), request).unwrap();
+        let response = interp
+            .execute_route(&interp.routes[0].clone(), request)
+            .unwrap();
         if let Value::Struct { fields, .. } = &response {
             assert_eq!(fields.get("status"), Some(&Value::Int(200)));
-        } else { panic!("Expected Response"); }
+        } else {
+            panic!("Expected Response");
+        }
     }
 
     #[test]
@@ -2219,6 +2378,8 @@ wrap(42)
         let result = eval(input);
         if let Value::Struct { fields, .. } = &result {
             assert_eq!(fields.get("status"), Some(&Value::Int(200)));
-        } else { panic!("Expected Response, got {:?}", result); }
+        } else {
+            panic!("Expected Response, got {:?}", result);
+        }
     }
 }

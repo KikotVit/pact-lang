@@ -2,9 +2,9 @@ use std::env;
 use std::fs;
 use std::process;
 
+use pact::interpreter::{Interpreter, Value};
 use pact::lexer::{Lexer, TokenKind};
 use pact::parser::Parser;
-use pact::interpreter::{Interpreter, Value};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -37,14 +37,19 @@ fn main() {
         let mut lexer = Lexer::new(&source);
         let tokens = match lexer.tokenize() {
             Ok(t) => t,
-            Err(e) => { eprintln!("{}", e); process::exit(1); }
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
         };
 
         let mut parser = Parser::new(tokens, &source);
         let program = match parser.parse() {
             Ok(p) => p,
             Err(errors) => {
-                for e in &errors { eprintln!("{}", e); }
+                for e in &errors {
+                    eprintln!("{}", e);
+                }
                 process::exit(1);
             }
         };
@@ -91,21 +96,26 @@ fn main() {
         let mut lexer = Lexer::new(&source);
         let tokens = match lexer.tokenize() {
             Ok(t) => t,
-            Err(e) => { eprintln!("{}", e); process::exit(1); }
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
         };
 
         let mut parser = Parser::new(tokens, &source);
         let program = match parser.parse() {
             Ok(p) => p,
             Err(errors) => {
-                for e in &errors { eprintln!("{}", e); }
+                for e in &errors {
+                    eprintln!("{}", e);
+                }
                 process::exit(1);
             }
         };
 
         let mut interp = Interpreter::new(&source);
         interp.set_base_dir(filename);
-        interp.setup_test_effects();  // provide effects for now
+        interp.setup_test_effects(); // provide effects for now
         match interp.interpret(&program) {
             Ok(value) => {
                 if let Some((name, port)) = interp.app_config.clone() {
@@ -117,7 +127,10 @@ fn main() {
                     }
                 }
             }
-            Err(e) => { eprintln!("{}", e); process::exit(1); }
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
         }
         return;
     }
@@ -163,11 +176,17 @@ fn main() {
                     println!("  {:>3}:{:<3}  Newline", token.span.line, token.span.column);
                 }
                 _ => {
-                    println!("  {:>3}:{:<3}  {:?}", token.span.line, token.span.column, token.kind);
+                    println!(
+                        "  {:>3}:{:<3}  {:?}",
+                        token.span.line, token.span.column, token.kind
+                    );
                 }
             }
         }
-        let meaningful = tokens.iter().filter(|t| !matches!(t.kind, TokenKind::Eof | TokenKind::Newline)).count();
+        let meaningful = tokens
+            .iter()
+            .filter(|t| !matches!(t.kind, TokenKind::Eof | TokenKind::Newline))
+            .count();
         println!("\n{} tokens", meaningful);
     }
 }
