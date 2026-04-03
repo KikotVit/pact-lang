@@ -47,6 +47,10 @@ pub enum Statement {
         effects: Vec<String>,
         body: Vec<Statement>,
     },
+    App {
+        name: String,
+        port: u16,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

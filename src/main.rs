@@ -103,9 +103,13 @@ fn main() {
         interp.setup_test_effects();  // provide effects for now
         match interp.interpret(&program) {
             Ok(value) => {
-                match value {
-                    Value::Nothing => {} // don't print nothing
-                    _ => println!("{}", value),
+                if let Some((name, port)) = interp.app_config.clone() {
+                    pact::interpreter::server::start_server(&mut interp, &name, port);
+                } else {
+                    match value {
+                        Value::Nothing => {} // don't print nothing
+                        _ => println!("{}", value),
+                    }
                 }
             }
             Err(e) => { eprintln!("{}", e); process::exit(1); }

@@ -715,6 +715,7 @@ impl Parser {
                 self.parse_fn_decl(Some(intent))?
             }
             TokenKind::Route => self.parse_route()?,
+            TokenKind::App => self.parse_app()?,
             TokenKind::Type => self.parse_type_decl_stmt()?,
             TokenKind::Test => self.parse_test_block()?,
             TokenKind::Identifier(word) if word == "using" => {
@@ -1133,6 +1134,41 @@ impl Parser {
         self.expect_closing_brace()?;
 
         Ok(Statement::Route { method, path, intent, effects, body })
+    }
+
+    fn parse_app(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // consume `app`
+        let name = self.expect_identifier()?;
+        self.expect(&TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        // Expect `port: <int>`
+        let key = self.expect_identifier()?;
+        if key != "port" {
+            return self.fail(
+                &format!("Expected 'port' in app declaration, found '{}'", key),
+                None,
+            );
+        }
+        self.expect(&TokenKind::Colon)?;
+        let port = match self.current_kind().clone() {
+            TokenKind::IntLiteral(n) => {
+                self.advance();
+                n as u16
+            }
+            _ => return self.fail(
+                &format!("Expected integer for port, found {:?}", self.current_kind()),
+                None,
+            ),
+        };
+
+        // Eat optional comma
+        self.eat(&TokenKind::Comma);
+        self.skip_newlines();
+
+        self.expect(&TokenKind::RBrace)?;
+
+        Ok(Statement::App { name, port })
     }
 
     fn parse_dot_shorthand(&mut self) -> Result<Expr, ParseError> {
@@ -2069,5 +2105,11 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
         if let Statement::Route { body, .. } = &prog.statements[0] {
             assert!(!body.is_empty());
         } else { panic!("Expected Route"); }
+    }
+
+    #[test]
+    fn parse_app() {
+        let prog = parse_program("app UserService {\n  port: 8080,\n}");
+        assert!(matches!(&prog.statements[0], Statement::App { name, port } if name == "UserService" && *port == 8080));
     }
 }

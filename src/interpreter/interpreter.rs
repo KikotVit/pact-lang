@@ -33,6 +33,7 @@ pub struct Interpreter {
     pub base_dir: Option<PathBuf>,
     pub module_cache: HashMap<PathBuf, Environment>,
     pub routes: Vec<StoredRoute>,
+    pub app_config: Option<(String, u16)>,
 }
 
 impl Interpreter {
@@ -48,6 +49,7 @@ impl Interpreter {
             base_dir: None,
             module_cache: HashMap::new(),
             routes: Vec::new(),
+            app_config: None,
         }
     }
 
@@ -175,6 +177,10 @@ impl Interpreter {
                     effects: effects.clone(),
                     body: body.clone(),
                 });
+                Ok(StmtResult::Value(Value::Nothing))
+            }
+            Statement::App { name, port } => {
+                self.app_config = Some((name.clone(), *port));
                 Ok(StmtResult::Value(Value::Nothing))
             }
         }
