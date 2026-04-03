@@ -37,6 +37,8 @@ pub struct Interpreter {
     pub module_cache: HashMap<PathBuf, Environment>,
     pub routes: Vec<StoredRoute>,
     pub app_config: Option<(String, u16)>,
+    /// Effects blocked from global lookup (enforces `needs` declarations)
+    blocked_effects: Vec<String>,
 }
 
 impl Interpreter {
@@ -53,6 +55,7 @@ impl Interpreter {
             module_cache: HashMap::new(),
             routes: Vec::new(),
             app_config: None,
+            blocked_effects: Vec::new(),
         }
     }
 
@@ -211,17 +214,37 @@ impl Interpreter {
             Expr::BoolLiteral(b) => Ok(Value::Bool(*b)),
             Expr::Nothing => Ok(Value::Nothing),
             Expr::Identifier(name) => {
-                if let Some(val) = env.lookup(name) {
+                if self.blocked_effects.contains(name) {
+                    // Effect not declared in `needs` — block it even if in global
+                    let mut err =
+                        self.error(&format!("Effect '{}' is not available in this scope", name));
+                    err.hint = Some(format!(
+                        "Add 'needs {}' to the function or route declaration",
+                        name
+                    ));
+                    return Err(err);
+                } else if let Some(val) = env.lookup(name) {
                     Ok(val.clone())
                 } else if let Some(val) = self.global.lookup(name) {
                     Ok(val.clone())
                 } else {
-                    let mut err = self.error(&format!("Undefined variable '{}'", name));
-                    err.hint = Some(
-                        "Variables must be declared with 'let' or 'var', or passed as function parameters"
-                            .to_string(),
-                    );
-                    Err(err)
+                    let known_effects = ["db", "auth", "log", "time", "rng"];
+                    if known_effects.contains(&name.as_str()) {
+                        let mut err = self
+                            .error(&format!("Effect '{}' is not available in this scope", name));
+                        err.hint = Some(format!(
+                            "Add 'needs {}' to the function or route declaration",
+                            name
+                        ));
+                        Err(err)
+                    } else {
+                        let mut err = self.error(&format!("Undefined variable '{}'", name));
+                        err.hint = Some(
+                            "Variables must be declared with 'let' or 'var', or passed as function parameters"
+                                .to_string(),
+                        );
+                        Err(err)
+                    }
                 }
             }
             Expr::StringLiteral(string_expr) => match string_expr {
@@ -1834,9 +1857,22 @@ impl Interpreter {
         route: &StoredRoute,
         request: Value,
     ) -> Result<Value, RuntimeError> {
+        let known_effects: Vec<String> = ["db", "auth", "log", "time", "rng"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        // Block undeclared effects from global lookup
+        self.blocked_effects = known_effects
+            .iter()
+            .filter(|e| !route.effects.contains(e))
+            .cloned()
+            .collect();
+
         let mut env = Environment::with_parent(self.global.clone());
         env.bind("request".to_string(), request, false);
 
+        // Explicitly bind declared effects into local env
         for effect_name in &route.effects {
             if let Some(effect) = self.global.lookup(effect_name) {
                 env.bind(effect_name.clone(), effect.clone(), false);
@@ -1848,13 +1884,21 @@ impl Interpreter {
         for stmt in &body {
             match self.eval_statement(stmt, &mut env) {
                 Ok(StmtResult::Value(val)) => result = val,
-                Ok(StmtResult::Return(val)) => return Ok(val),
+                Ok(StmtResult::Return(val)) => {
+                    self.blocked_effects.clear();
+                    return Ok(val);
+                }
                 Err(ref e) if Self::is_return_error(e) => {
+                    self.blocked_effects.clear();
                     return Ok(self.take_return_value());
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    self.blocked_effects.clear();
+                    return Err(e);
+                }
             }
         }
+        self.blocked_effects.clear();
         Ok(result)
     }
 
