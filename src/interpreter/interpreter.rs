@@ -222,7 +222,7 @@ impl Interpreter {
                         "Add 'needs {}' to the function or route declaration",
                         name
                     ));
-                    return Err(err);
+                    Err(err)
                 } else if let Some(val) = env.lookup(name) {
                     Ok(val.clone())
                 } else if let Some(val) = self.global.lookup(name) {
