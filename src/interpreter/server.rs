@@ -95,9 +95,24 @@ pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
                 }
             };
 
+            // Extract headers
+            let mut headers_map = HashMap::new();
+            for header in request.headers() {
+                headers_map.insert(
+                    header.field.to_string().to_lowercase(),
+                    header.value.to_string(),
+                );
+            }
+
             // Build request Value
-            let req_value =
-                build_request_value(&method, path, path_params, query_params, body_value);
+            let req_value = build_request_value(
+                &method,
+                path,
+                path_params,
+                query_params,
+                headers_map,
+                body_value,
+            );
 
             // Execute route
             let route = interpreter.routes[*route_idx].clone();
@@ -156,6 +171,7 @@ fn build_request_value(
     path: &str,
     path_params: HashMap<String, String>,
     query_params: HashMap<String, String>,
+    headers: HashMap<String, String>,
     body: Value,
 ) -> Value {
     let params_fields: HashMap<String, Value> = path_params
@@ -183,6 +199,17 @@ fn build_request_value(
         Value::Struct {
             type_name: "Query".to_string(),
             fields: query_fields,
+        },
+    );
+    let headers_fields: HashMap<String, Value> = headers
+        .into_iter()
+        .map(|(k, v)| (k, Value::String(v)))
+        .collect();
+    fields.insert(
+        "headers".to_string(),
+        Value::Struct {
+            type_name: "Headers".to_string(),
+            fields: headers_fields,
         },
     );
     fields.insert("body".to_string(), body);

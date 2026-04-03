@@ -989,31 +989,16 @@ impl Interpreter {
                 Ok(Value::Nothing)
             }
             "auth.require" => {
-                // Check request for token param or Authorization header
+                // Check Authorization header: "Bearer <token>"
                 if let Some(Value::Struct { fields, .. }) = args.first() {
-                    // Check params.token
-                    if let Some(Value::Struct { fields: params, .. }) = fields.get("params") {
-                        if let Some(Value::String(token)) = params.get("token") {
-                            if !token.is_empty() {
-                                let mut user_fields = HashMap::new();
-                                user_fields
-                                    .insert("id".to_string(), Value::String("user-1".to_string()));
-                                user_fields.insert(
-                                    "name".to_string(),
-                                    Value::String("Authenticated User".to_string()),
-                                );
-                                user_fields
-                                    .insert("role".to_string(), Value::String("Admin".to_string()));
-                                return Ok(Value::Struct {
-                                    type_name: "User".to_string(),
-                                    fields: user_fields,
-                                });
-                            }
-                        }
-                    }
-                    // Check query.token
-                    if let Some(Value::Struct { fields: query, .. }) = fields.get("query") {
-                        if let Some(Value::String(token)) = query.get("token") {
+                    if let Some(Value::Struct {
+                        fields: headers, ..
+                    }) = fields.get("headers")
+                    {
+                        if let Some(Value::String(auth_header)) = headers.get("authorization") {
+                            let token = auth_header
+                                .strip_prefix("Bearer ")
+                                .unwrap_or(auth_header.as_str());
                             if !token.is_empty() {
                                 let mut user_fields = HashMap::new();
                                 user_fields
