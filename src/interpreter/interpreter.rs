@@ -1352,10 +1352,8 @@ impl Interpreter {
                 // Propagate the error as a return from the current function
                 Err(self.make_return_error(err))
             }
-            other => Err(self.error(&format!(
-                "Cannot use '?' on {} value (expected Ok or Error)",
-                other.type_name()
-            ))),
+            // Non-Ok/Error values pass through (treat as success)
+            other => Ok(other),
         }
     }
 
