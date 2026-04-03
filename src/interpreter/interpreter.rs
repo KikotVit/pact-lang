@@ -848,6 +848,12 @@ impl Interpreter {
                 self.db_storage.clear();
                 Ok(self.make_db_effect())
             }
+            "print" => {
+                for arg in &args {
+                    eprintln!("{}", arg);
+                }
+                Ok(Value::Nothing)
+            }
             _ => Err(self.error(&format!("Unknown builtin '{}'", name))),
         }
     }
@@ -1006,6 +1012,15 @@ impl Interpreter {
             "list".to_string(),
             Value::BuiltinFn {
                 name: "list".to_string(),
+            },
+            false,
+        );
+
+        // print builtin
+        self.global.bind(
+            "print".to_string(),
+            Value::BuiltinFn {
+                name: "print".to_string(),
             },
             false,
         );
