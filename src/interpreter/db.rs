@@ -104,7 +104,7 @@ fn row_to_value(row: &rusqlite::Row, schema: &[ColDef]) -> Result<Value, rusqlit
         fields.insert(col.name.clone(), value);
     }
     Ok(Value::Struct {
-        type_name: "Row".to_string(),
+        type_name: "Struct".to_string(),
         fields,
     })
 }
@@ -299,18 +299,25 @@ impl DbBackend {
                 let (sql, params) = if let Some(Value::Struct { fields, .. }) = filter {
                     let mut where_parts = Vec::new();
                     let mut param_values: Vec<Box<dyn ToSql>> = Vec::new();
-                    for (key, val) in fields {
-                        where_parts.push(format!("\"{}\" = ?", key));
-                        param_values.push(value_to_sql(val));
+                    // Use schema column names (not filter keys) to prevent SQL injection
+                    for col in schema {
+                        if let Some(val) = fields.get(&col.name) {
+                            where_parts.push(format!("\"{}\" = ?", col.name));
+                            param_values.push(value_to_sql(val));
+                        }
                     }
-                    (
-                        format!(
-                            "SELECT * FROM \"{}\" WHERE {}",
-                            table,
-                            where_parts.join(" AND ")
-                        ),
-                        param_values,
-                    )
+                    if where_parts.is_empty() {
+                        (format!("SELECT * FROM \"{}\"", table), vec![])
+                    } else {
+                        (
+                            format!(
+                                "SELECT * FROM \"{}\" WHERE {}",
+                                table,
+                                where_parts.join(" AND ")
+                            ),
+                            param_values,
+                        )
+                    }
                 } else {
                     (format!("SELECT * FROM \"{}\"", table), vec![])
                 };
@@ -363,18 +370,25 @@ impl DbBackend {
                 let (sql, params) = if let Value::Struct { fields, .. } = filter {
                     let mut where_parts = Vec::new();
                     let mut param_values: Vec<Box<dyn ToSql>> = Vec::new();
-                    for (key, val) in fields {
-                        where_parts.push(format!("\"{}\" = ?", key));
-                        param_values.push(value_to_sql(val));
+                    // Use schema column names (not filter keys) to prevent SQL injection
+                    for col in schema {
+                        if let Some(val) = fields.get(&col.name) {
+                            where_parts.push(format!("\"{}\" = ?", col.name));
+                            param_values.push(value_to_sql(val));
+                        }
                     }
-                    (
-                        format!(
-                            "SELECT * FROM \"{}\" WHERE {} LIMIT 1",
-                            table,
-                            where_parts.join(" AND ")
-                        ),
-                        param_values,
-                    )
+                    if where_parts.is_empty() {
+                        (format!("SELECT * FROM \"{}\" LIMIT 1", table), vec![])
+                    } else {
+                        (
+                            format!(
+                                "SELECT * FROM \"{}\" WHERE {} LIMIT 1",
+                                table,
+                                where_parts.join(" AND ")
+                            ),
+                            param_values,
+                        )
+                    }
                 } else {
                     (format!("SELECT * FROM \"{}\" LIMIT 1", table), vec![])
                 };
