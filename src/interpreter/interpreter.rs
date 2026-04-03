@@ -2981,7 +2981,8 @@ test "add works" {
 
     #[test]
     fn eval_db_no_config_with_app_errors() {
-        let input = "app TestApp {\n  port: 8080,\n}\ndb.insert(\"users\", User { name: \"Alice\" })";
+        let input =
+            "app TestApp {\n  port: 8080,\n}\ndb.insert(\"users\", User { name: \"Alice\" })";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens, input);

@@ -1276,7 +1276,10 @@ impl Parser {
                         }
                         _ => {
                             return self.fail(
-                                &format!("Expected integer for port, found {}", self.current_kind()),
+                                &format!(
+                                    "Expected integer for port, found {}",
+                                    self.current_kind()
+                                ),
                                 Some("Syntax: app Name { port: 8080 }"),
                             );
                         }

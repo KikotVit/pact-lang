@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use rusqlite::types::ToSql;
 use rusqlite::Connection;
+use rusqlite::types::ToSql;
 
 use super::errors::RuntimeError;
 use super::value::Value;
@@ -162,8 +162,7 @@ impl DbBackend {
             };
             if let Some(existing) = schemas.get(table) {
                 // ALTER TABLE for new columns
-                let existing_names: Vec<&str> =
-                    existing.iter().map(|c| c.name.as_str()).collect();
+                let existing_names: Vec<&str> = existing.iter().map(|c| c.name.as_str()).collect();
                 let mut new_cols = Vec::new();
                 for (name, val) in fields {
                     if !existing_names.contains(&name.as_str()) {
@@ -184,10 +183,7 @@ impl DbBackend {
                         [],
                     )
                     .map_err(|e| {
-                        db_error(
-                            &format!("adding column '{}' to '{}'", col.name, table),
-                            e,
-                        )
+                        db_error(&format!("adding column '{}' to '{}'", col.name, table), e)
                     })?;
                 }
                 if !new_cols.is_empty() {
@@ -199,11 +195,7 @@ impl DbBackend {
                 let mut col_defs = Vec::new();
                 for (name, val) in fields {
                     let pact_type = PactType::from_value(val);
-                    col_defs.push(format!(
-                        "\"{}\" {}",
-                        name,
-                        pact_type.to_sql_type()
-                    ));
+                    col_defs.push(format!("\"{}\" {}", name, pact_type.to_sql_type()));
                     cols.push(ColDef {
                         name: name.clone(),
                         pact_type,
@@ -271,8 +263,7 @@ impl DbBackend {
                     .iter()
                     .map(|col| value_to_sql(fields.get(&col.name).unwrap_or(&Value::Nothing)))
                     .collect();
-                let param_refs: Vec<&dyn ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
+                let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
                 conn.execute(&sql, param_refs.as_slice())
                     .map_err(|e| db_error(&format!("insert on table '{}'", table), e))?;
                 Ok(value)
@@ -321,8 +312,7 @@ impl DbBackend {
                 } else {
                     (format!("SELECT * FROM \"{}\"", table), vec![])
                 };
-                let param_refs: Vec<&dyn ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
+                let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
                 let mut stmt = conn
                     .prepare(&sql)
                     .map_err(|e| db_error(&format!("query on table '{}'", table), e))?;
@@ -332,9 +322,7 @@ impl DbBackend {
                 let mut results = Vec::new();
                 for row in rows {
                     results.push(
-                        row.map_err(|e| {
-                            db_error(&format!("reading row from '{}'", table), e)
-                        })?,
+                        row.map_err(|e| db_error(&format!("reading row from '{}'", table), e))?,
                     );
                 }
                 Ok(Value::List(results))
@@ -364,7 +352,7 @@ impl DbBackend {
                         return Ok(Value::Error {
                             variant: "NotFound".to_string(),
                             fields: None,
-                        })
+                        });
                     }
                 };
                 let (sql, params) = if let Value::Struct { fields, .. } = filter {
@@ -392,8 +380,7 @@ impl DbBackend {
                 } else {
                     (format!("SELECT * FROM \"{}\" LIMIT 1", table), vec![])
                 };
-                let param_refs: Vec<&dyn ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
+                let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
                 let mut stmt = conn
                     .prepare(&sql)
                     .map_err(|e| db_error(&format!("find on table '{}'", table), e))?;
@@ -401,9 +388,9 @@ impl DbBackend {
                     .query_map(param_refs.as_slice(), |row| row_to_value(row, schema))
                     .map_err(|e| db_error(&format!("find on table '{}'", table), e))?;
                 match rows.next() {
-                    Some(row) => row.map_err(|e| {
-                        db_error(&format!("reading row from '{}'", table), e)
-                    }),
+                    Some(row) => {
+                        row.map_err(|e| db_error(&format!("reading row from '{}'", table), e))
+                    }
                     None => Ok(Value::Error {
                         variant: "NotFound".to_string(),
                         fields: None,
@@ -446,7 +433,7 @@ impl DbBackend {
                         return Ok(Value::Error {
                             variant: "NotFound".to_string(),
                             fields: None,
-                        })
+                        });
                     }
                 };
                 let fields = match &new_value {
@@ -455,7 +442,7 @@ impl DbBackend {
                         return Ok(Value::Error {
                             variant: "NotFound".to_string(),
                             fields: None,
-                        })
+                        });
                     }
                 };
                 let mut set_parts = Vec::new();
@@ -476,8 +463,7 @@ impl DbBackend {
                     table,
                     set_parts.join(", ")
                 );
-                let param_refs: Vec<&dyn ToSql> =
-                    params.iter().map(|p| p.as_ref()).collect();
+                let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
                 let rows_affected = conn
                     .execute(&sql, param_refs.as_slice())
                     .map_err(|e| db_error(&format!("update on table '{}'", table), e))?;
@@ -525,14 +511,11 @@ impl DbBackend {
                         return Ok(Value::Error {
                             variant: "NotFound".to_string(),
                             fields: None,
-                        })
+                        });
                     }
                 };
                 // SELECT the row first so we can return it
-                let select_sql = format!(
-                    "SELECT * FROM \"{}\" WHERE \"id\" = ? LIMIT 1",
-                    table
-                );
+                let select_sql = format!("SELECT * FROM \"{}\" WHERE \"id\" = ? LIMIT 1", table);
                 let id_param = value_to_sql(&Value::String(id.to_string()));
                 let mut stmt = conn
                     .prepare(&select_sql)
@@ -541,22 +524,21 @@ impl DbBackend {
                     .query_map([id_param.as_ref()], |row| row_to_value(row, schema))
                     .map_err(|e| db_error(&format!("delete select on table '{}'", table), e))?;
                 let found = match rows.next() {
-                    Some(row) => row.map_err(|e| {
-                        db_error(&format!("reading row from '{}'", table), e)
-                    })?,
+                    Some(row) => {
+                        row.map_err(|e| db_error(&format!("reading row from '{}'", table), e))?
+                    }
                     None => {
                         return Ok(Value::Error {
                             variant: "NotFound".to_string(),
                             fields: None,
-                        })
+                        });
                     }
                 };
                 // Drop the statement before executing DELETE (borrow rules)
                 drop(rows);
                 drop(stmt);
                 // DELETE the row
-                let delete_sql =
-                    format!("DELETE FROM \"{}\" WHERE \"id\" = ?", table);
+                let delete_sql = format!("DELETE FROM \"{}\" WHERE \"id\" = ?", table);
                 let id_param2 = value_to_sql(&Value::String(id.to_string()));
                 conn.execute(&delete_sql, [id_param2.as_ref()])
                     .map_err(|e| db_error(&format!("delete on table '{}'", table), e))?;
@@ -620,7 +602,8 @@ mod tests {
     #[test]
     fn sqlite_insert_creates_table() {
         let mut db = new_sqlite();
-        db.insert("users", make_user("1", "Alice", 30, true)).unwrap();
+        db.insert("users", make_user("1", "Alice", 30, true))
+            .unwrap();
         let result = db.query("users", None).unwrap();
         if let Value::List(items) = result {
             assert_eq!(items.len(), 1);
@@ -633,8 +616,10 @@ mod tests {
     #[test]
     fn sqlite_insert_and_query() {
         let mut db = new_sqlite();
-        db.insert("users", make_user("1", "Alice", 30, true)).unwrap();
-        db.insert("users", make_user("2", "Bob", 25, false)).unwrap();
+        db.insert("users", make_user("1", "Alice", 30, true))
+            .unwrap();
+        db.insert("users", make_user("2", "Bob", 25, false))
+            .unwrap();
         let result = db.query("users", None).unwrap();
         if let Value::List(items) = result {
             assert_eq!(items.len(), 2);
@@ -647,11 +632,15 @@ mod tests {
     #[test]
     fn sqlite_find_returns_value() {
         let mut db = new_sqlite();
-        db.insert("users", make_user("1", "Alice", 30, true)).unwrap();
+        db.insert("users", make_user("1", "Alice", 30, true))
+            .unwrap();
         let filter = make_filter("id", Value::String("1".to_string()));
         let result = db.find("users", &filter).unwrap();
         if let Value::Struct { fields, .. } = &result {
-            assert_eq!(fields.get("name"), Some(&Value::String("Alice".to_string())));
+            assert_eq!(
+                fields.get("name"),
+                Some(&Value::String("Alice".to_string()))
+            );
         } else {
             panic!("expected Value::Struct, got {:?}", result);
         }
@@ -661,7 +650,8 @@ mod tests {
     #[test]
     fn sqlite_find_not_found() {
         let mut db = new_sqlite();
-        db.insert("users", make_user("1", "Alice", 30, true)).unwrap();
+        db.insert("users", make_user("1", "Alice", 30, true))
+            .unwrap();
         let filter = make_filter("id", Value::String("999".to_string()));
         let result = db.find("users", &filter).unwrap();
         assert!(matches!(result, Value::Error { variant, .. } if variant == "NotFound"));
@@ -671,13 +661,17 @@ mod tests {
     #[test]
     fn sqlite_update() {
         let mut db = new_sqlite();
-        db.insert("users", make_user("1", "Alice", 30, true)).unwrap();
+        db.insert("users", make_user("1", "Alice", 30, true))
+            .unwrap();
         let updated = make_user("1", "Alicia", 31, true);
         db.update("users", "1", updated).unwrap();
         let filter = make_filter("id", Value::String("1".to_string()));
         let result = db.find("users", &filter).unwrap();
         if let Value::Struct { fields, .. } = &result {
-            assert_eq!(fields.get("name"), Some(&Value::String("Alicia".to_string())));
+            assert_eq!(
+                fields.get("name"),
+                Some(&Value::String("Alicia".to_string()))
+            );
             assert_eq!(fields.get("age"), Some(&Value::Int(31)));
         } else {
             panic!("expected Value::Struct, got {:?}", result);
@@ -688,7 +682,8 @@ mod tests {
     #[test]
     fn sqlite_delete() {
         let mut db = new_sqlite();
-        db.insert("users", make_user("1", "Alice", 30, true)).unwrap();
+        db.insert("users", make_user("1", "Alice", 30, true))
+            .unwrap();
         db.delete("users", "1").unwrap();
         let result = db.query("users", None).unwrap();
         if let Value::List(items) = result {
@@ -702,14 +697,19 @@ mod tests {
     #[test]
     fn sqlite_query_with_filter() {
         let mut db = new_sqlite();
-        db.insert("users", make_user("1", "Alice", 30, true)).unwrap();
-        db.insert("users", make_user("2", "Bob", 25, false)).unwrap();
+        db.insert("users", make_user("1", "Alice", 30, true))
+            .unwrap();
+        db.insert("users", make_user("2", "Bob", 25, false))
+            .unwrap();
         let filter = make_filter("active", Value::Bool(true));
         let result = db.query("users", Some(&filter)).unwrap();
         if let Value::List(items) = result {
             assert_eq!(items.len(), 1);
             if let Value::Struct { fields, .. } = &items[0] {
-                assert_eq!(fields.get("name"), Some(&Value::String("Alice".to_string())));
+                assert_eq!(
+                    fields.get("name"),
+                    Some(&Value::String("Alice".to_string()))
+                );
             } else {
                 panic!("expected Value::Struct in list item");
             }
@@ -723,14 +723,18 @@ mod tests {
     fn sqlite_alter_table_new_field() {
         let mut db = new_sqlite();
         // Insert user without email
-        db.insert("users", make_user("1", "Alice", 30, true)).unwrap();
+        db.insert("users", make_user("1", "Alice", 30, true))
+            .unwrap();
         // Insert user WITH email field
         let mut fields2 = HashMap::new();
         fields2.insert("id".to_string(), Value::String("2".to_string()));
         fields2.insert("name".to_string(), Value::String("Bob".to_string()));
         fields2.insert("age".to_string(), Value::Int(25));
         fields2.insert("active".to_string(), Value::Bool(false));
-        fields2.insert("email".to_string(), Value::String("bob@example.com".to_string()));
+        fields2.insert(
+            "email".to_string(),
+            Value::String("bob@example.com".to_string()),
+        );
         let user2 = Value::Struct {
             type_name: "User".to_string(),
             fields: fields2,
@@ -741,24 +745,30 @@ mod tests {
         if let Value::List(items) = result {
             assert_eq!(items.len(), 2);
             // First user should have Nothing for email (column added after insert)
-            let first = items.iter().find(|item| {
-                if let Value::Struct { fields, .. } = item {
-                    fields.get("id") == Some(&Value::String("1".to_string()))
-                } else {
-                    false
-                }
-            }).expect("should find user 1");
+            let first = items
+                .iter()
+                .find(|item| {
+                    if let Value::Struct { fields, .. } = item {
+                        fields.get("id") == Some(&Value::String("1".to_string()))
+                    } else {
+                        false
+                    }
+                })
+                .expect("should find user 1");
             if let Value::Struct { fields, .. } = first {
                 assert_eq!(fields.get("email"), Some(&Value::Nothing));
             }
             // Second user should have the email value
-            let second = items.iter().find(|item| {
-                if let Value::Struct { fields, .. } = item {
-                    fields.get("id") == Some(&Value::String("2".to_string()))
-                } else {
-                    false
-                }
-            }).expect("should find user 2");
+            let second = items
+                .iter()
+                .find(|item| {
+                    if let Value::Struct { fields, .. } = item {
+                        fields.get("id") == Some(&Value::String("2".to_string()))
+                    } else {
+                        false
+                    }
+                })
+                .expect("should find user 2");
             if let Value::Struct { fields, .. } = second {
                 assert_eq!(
                     fields.get("email"),
@@ -780,7 +790,10 @@ mod tests {
         fields.insert("i".to_string(), Value::Int(42));
         fields.insert("f".to_string(), Value::Float(3.14));
         fields.insert("b".to_string(), Value::Bool(true));
-        fields.insert("l".to_string(), Value::List(vec![Value::Int(1), Value::Int(2)]));
+        fields.insert(
+            "l".to_string(),
+            Value::List(vec![Value::Int(1), Value::Int(2)]),
+        );
         fields.insert("n".to_string(), Value::Nothing);
         let val = Value::Struct {
             type_name: "Mixed".to_string(),
@@ -836,7 +849,8 @@ mod tests {
     fn sqlite_prepared_statements() {
         let mut db = new_sqlite();
         let evil_name = "'; DROP TABLE users; --";
-        db.insert("users", make_user("1", evil_name, 30, true)).unwrap();
+        db.insert("users", make_user("1", evil_name, 30, true))
+            .unwrap();
 
         // Table should still exist and queryable
         let result = db.query("users", None).unwrap();
@@ -881,7 +895,8 @@ mod tests {
     #[test]
     fn sqlite_no_app_memory_works() {
         let mut db = DbBackend::new_memory();
-        db.insert("users", make_user("1", "Alice", 30, true)).unwrap();
+        db.insert("users", make_user("1", "Alice", 30, true))
+            .unwrap();
         let result = db.query("users", None).unwrap();
         if let Value::List(items) = result {
             assert_eq!(items.len(), 1);
