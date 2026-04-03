@@ -867,6 +867,7 @@ impl Parser {
         }
 
         // Optional needs effect1, effect2
+        self.skip_newlines();
         let mut effects = Vec::new();
         if self.eat(&TokenKind::Needs) {
             // Parse comma-separated identifiers until we hit `{` (start of function body)
@@ -882,6 +883,7 @@ impl Parser {
         }
 
         // Body
+        self.skip_newlines();
         self.push_block("function");
         if !self.at(&TokenKind::LBrace) {
             return self.fail(

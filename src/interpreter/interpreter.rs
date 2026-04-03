@@ -736,15 +736,8 @@ impl Interpreter {
                 if items.len() == 1 {
                     Ok(Value::Ok(Box::new(items.into_iter().next().unwrap())))
                 } else {
-                    let err_val = self.eval_expr(error, env)?;
-                    let variant = match err_val {
-                        Value::String(s) => s,
-                        _ => format!("{}", err_val),
-                    };
-                    Ok(Value::Error {
-                        variant,
-                        fields: None,
-                    })
+                    let (variant, fields) = self.eval_error_expr(error, env)?;
+                    Ok(Value::Error { variant, fields })
                 }
             }
             PipelineStep::ExpectAny { error } => {
@@ -752,15 +745,8 @@ impl Interpreter {
                 if !items.is_empty() {
                     Ok(Value::Ok(Box::new(Value::List(items))))
                 } else {
-                    let err_val = self.eval_expr(error, env)?;
-                    let variant = match err_val {
-                        Value::String(s) => s,
-                        _ => format!("{}", err_val),
-                    };
-                    Ok(Value::Error {
-                        variant,
-                        fields: None,
-                    })
+                    let (variant, fields) = self.eval_error_expr(error, env)?;
+                    Ok(Value::Error { variant, fields })
                 }
             }
             PipelineStep::ExpectSuccess => {
@@ -1335,6 +1321,54 @@ impl Interpreter {
             Ok(Value::Nothing)
         } else {
             Err(self.error("Ensure failed: condition evaluated to false"))
+        }
+    }
+
+    // --- Error handling helpers ---
+
+    /// Evaluate an expression in `raise` position (e.g., `expect one or raise NotFound`).
+    /// PascalCase identifiers are treated as error variant names, not variable lookups.
+    fn eval_error_expr(
+        &mut self,
+        expr: &Expr,
+        env: &mut Environment,
+    ) -> Result<(String, Option<HashMap<String, Value>>), RuntimeError> {
+        match expr {
+            Expr::Identifier(name) if name.starts_with(char::is_uppercase) => {
+                Ok((name.clone(), None))
+            }
+            Expr::StructLiteral {
+                name: Some(name),
+                fields,
+            } if name.starts_with(char::is_uppercase) => {
+                let mut field_map = HashMap::new();
+                for f in fields {
+                    if let crate::parser::ast::StructField::Named {
+                        name: fname,
+                        value: fval,
+                    } = f
+                    {
+                        let v = self.eval_expr(fval, env)?;
+                        field_map.insert(fname.clone(), v);
+                    }
+                }
+                Ok((
+                    name.clone(),
+                    if field_map.is_empty() {
+                        None
+                    } else {
+                        Some(field_map)
+                    },
+                ))
+            }
+            other => {
+                let val = self.eval_expr(other, env)?;
+                let variant = match val {
+                    Value::String(s) => s,
+                    _ => format!("{}", val),
+                };
+                Ok((variant, None))
+            }
         }
     }
 
