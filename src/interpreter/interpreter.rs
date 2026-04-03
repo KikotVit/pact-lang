@@ -35,6 +35,7 @@ pub struct Interpreter {
     pending_return: Option<Value>,
     pub base_dir: Option<PathBuf>,
     pub module_cache: HashMap<PathBuf, Environment>,
+    pub type_defs: HashMap<String, Vec<String>>,
     pub routes: Vec<StoredRoute>,
     pub app_config: Option<(String, u16)>,
     /// Predetermined sequence for rng (testing)
@@ -55,6 +56,7 @@ impl Interpreter {
             pending_return: None,
             base_dir: None,
             module_cache: HashMap::new(),
+            type_defs: HashMap::new(),
             routes: Vec::new(),
             app_config: None,
             rng_sequence: None,
@@ -105,7 +107,13 @@ impl Interpreter {
                 self.global.bind(name.clone(), func.clone(), false);
                 Ok(StmtResult::Value(func))
             }
-            Statement::TypeDecl(_) => Ok(StmtResult::Value(Value::Nothing)),
+            Statement::TypeDecl(decl) => {
+                if let crate::parser::ast::TypeDecl::Struct { name, fields } = decl {
+                    let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+                    self.type_defs.insert(name.clone(), field_names);
+                }
+                Ok(StmtResult::Value(Value::Nothing))
+            }
             Statement::Use { path } => {
                 self.eval_use(path, env)?;
                 Ok(StmtResult::Value(Value::Nothing))
@@ -843,9 +851,57 @@ impl Interpreter {
                     _ => Ok(current), // pass through
                 }
             }
-            PipelineStep::ValidateAs { .. } => {
-                // v0.3a: pass through (real validation later)
-                Ok(current)
+            PipelineStep::ValidateAs { type_name } => {
+                if let Some(required_fields) = self.type_defs.get(type_name) {
+                    match &current {
+                        Value::Struct { fields, .. } => {
+                            let missing: Vec<&String> = required_fields
+                                .iter()
+                                .filter(|f| !fields.contains_key(*f))
+                                .collect();
+                            if missing.is_empty() {
+                                Ok(current)
+                            } else {
+                                Ok(Value::Error {
+                                    variant: "ValidationError".to_string(),
+                                    fields: Some({
+                                        let mut m = HashMap::new();
+                                        m.insert(
+                                            "message".to_string(),
+                                            Value::String(format!(
+                                                "Missing required fields: {}",
+                                                missing
+                                                    .iter()
+                                                    .map(|s| s.as_str())
+                                                    .collect::<Vec<_>>()
+                                                    .join(", ")
+                                            )),
+                                        );
+                                        m
+                                    }),
+                                })
+                            }
+                        }
+                        _ => Ok(Value::Error {
+                            variant: "ValidationError".to_string(),
+                            fields: Some({
+                                let mut m = HashMap::new();
+                                m.insert(
+                                    "message".to_string(),
+                                    Value::String(format!(
+                                        "Expected {} struct, got {}",
+                                        type_name,
+                                        current.type_name()
+                                    )),
+                                );
+                                m
+                            }),
+                        }),
+                    }
+                } else {
+                    // Unknown type — pass through
+                    Ok(current)
+                }
             }
             PipelineStep::Expr(expr) => {
                 let mut child_env = Environment::with_parent(env.clone());
