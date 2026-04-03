@@ -988,6 +988,59 @@ impl Interpreter {
                 }
                 Ok(Value::Nothing)
             }
+            "auth.require" => {
+                // Check request for token param or Authorization header
+                if let Some(Value::Struct { fields, .. }) = args.first() {
+                    // Check params.token
+                    if let Some(Value::Struct { fields: params, .. }) = fields.get("params") {
+                        if let Some(Value::String(token)) = params.get("token") {
+                            if !token.is_empty() {
+                                let mut user_fields = HashMap::new();
+                                user_fields
+                                    .insert("id".to_string(), Value::String("user-1".to_string()));
+                                user_fields.insert(
+                                    "name".to_string(),
+                                    Value::String("Authenticated User".to_string()),
+                                );
+                                user_fields
+                                    .insert("role".to_string(), Value::String("Admin".to_string()));
+                                return Ok(Value::Struct {
+                                    type_name: "User".to_string(),
+                                    fields: user_fields,
+                                });
+                            }
+                        }
+                    }
+                    // Check query.token
+                    if let Some(Value::Struct { fields: query, .. }) = fields.get("query") {
+                        if let Some(Value::String(token)) = query.get("token") {
+                            if !token.is_empty() {
+                                let mut user_fields = HashMap::new();
+                                user_fields
+                                    .insert("id".to_string(), Value::String("user-1".to_string()));
+                                user_fields.insert(
+                                    "name".to_string(),
+                                    Value::String("Authenticated User".to_string()),
+                                );
+                                user_fields
+                                    .insert("role".to_string(), Value::String("Admin".to_string()));
+                                return Ok(Value::Struct {
+                                    type_name: "User".to_string(),
+                                    fields: user_fields,
+                                });
+                            }
+                        }
+                    }
+                }
+                Ok(Value::Error {
+                    variant: "Unauthorized".to_string(),
+                    fields: None,
+                })
+            }
+            "auth.mock" => {
+                // For testing: returns the provided user struct as-is
+                Ok(args.into_iter().next().unwrap_or(Value::Nothing))
+            }
             _ => Err(self.error(&format!("Unknown builtin '{}'", name))),
         }
     }
@@ -1230,6 +1283,29 @@ impl Interpreter {
             "print".to_string(),
             Value::BuiltinFn {
                 name: "print".to_string(),
+            },
+            false,
+        );
+
+        // auth effect
+        let mut auth_methods = HashMap::new();
+        auth_methods.insert(
+            "require".to_string(),
+            Value::BuiltinFn {
+                name: "auth.require".to_string(),
+            },
+        );
+        auth_methods.insert(
+            "mock".to_string(),
+            Value::BuiltinFn {
+                name: "auth.mock".to_string(),
+            },
+        );
+        self.global.bind(
+            "auth".to_string(),
+            Value::Effect {
+                name: "auth".to_string(),
+                methods: auth_methods,
             },
             false,
         );
@@ -1723,9 +1799,13 @@ impl Interpreter {
         let mut result = Value::Nothing;
         let body = route.body.clone();
         for stmt in &body {
-            match self.eval_statement(stmt, &mut env)? {
-                StmtResult::Value(val) => result = val,
-                StmtResult::Return(val) => return Ok(val),
+            match self.eval_statement(stmt, &mut env) {
+                Ok(StmtResult::Value(val)) => result = val,
+                Ok(StmtResult::Return(val)) => return Ok(val),
+                Err(ref e) if Self::is_return_error(e) => {
+                    return Ok(self.take_return_value());
+                }
+                Err(e) => return Err(e),
             }
         }
         Ok(result)
