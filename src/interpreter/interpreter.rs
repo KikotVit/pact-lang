@@ -942,6 +942,7 @@ impl Interpreter {
             "list" => Ok(Value::List(args)),
             "db.insert" => self.builtin_db_insert(args),
             "db.query" => self.builtin_db_query(args),
+            "db.find" => self.builtin_db_find(args),
             "db.update" => self.builtin_db_update(args),
             "db.delete" => self.builtin_db_delete(args),
             "time.now" => self.builtin_time_now(),
@@ -1047,19 +1048,68 @@ impl Interpreter {
     }
 
     fn builtin_db_query(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
-        if args.len() != 1 {
-            return Err(self.error("db.query expects 1 argument: table name"));
+        if args.is_empty() || args.len() > 2 {
+            return Err(
+                self.error("db.query expects 1-2 arguments: table name, optional filter struct")
+            );
         }
         let table_name = match &args[0] {
             Value::String(s) => s.clone(),
-            _ => return Err(self.error("db.query argument must be a String table name")),
+            _ => return Err(self.error("db.query first argument must be a String table name")),
         };
         let items = self
             .db_storage
             .get(&table_name)
             .cloned()
             .unwrap_or_default();
-        Ok(Value::List(items))
+        // Optional filter: db.query("users", { active: true })
+        if let Some(filter) = args.get(1) {
+            Ok(Value::List(self.filter_by_struct(&items, filter)))
+        } else {
+            Ok(Value::List(items))
+        }
+    }
+
+    fn builtin_db_find(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        if args.len() != 2 {
+            return Err(self.error("db.find expects 2 arguments: table name, filter struct"));
+        }
+        let table_name = match &args[0] {
+            Value::String(s) => s.clone(),
+            _ => return Err(self.error("db.find first argument must be a String table name")),
+        };
+        let items = self
+            .db_storage
+            .get(&table_name)
+            .cloned()
+            .unwrap_or_default();
+        let matches = self.filter_by_struct(&items, &args[1]);
+        match matches.into_iter().next() {
+            Some(item) => Ok(item),
+            None => Ok(Value::Error {
+                variant: "NotFound".to_string(),
+                fields: None,
+            }),
+        }
+    }
+
+    /// Match items against a struct filter — all fields in filter must match.
+    fn filter_by_struct(&self, items: &[Value], filter: &Value) -> Vec<Value> {
+        let filter_fields = match filter {
+            Value::Struct { fields, .. } => fields,
+            _ => return items.to_vec(),
+        };
+        items
+            .iter()
+            .filter(|item| {
+                if let Value::Struct { fields, .. } = item {
+                    filter_fields.iter().all(|(k, v)| fields.get(k) == Some(v))
+                } else {
+                    false
+                }
+            })
+            .cloned()
+            .collect()
     }
 
     fn builtin_db_update(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
@@ -1173,6 +1223,12 @@ impl Interpreter {
             "query".to_string(),
             Value::BuiltinFn {
                 name: "db.query".to_string(),
+            },
+        );
+        db_methods.insert(
+            "find".to_string(),
+            Value::BuiltinFn {
+                name: "db.find".to_string(),
             },
         );
         db_methods.insert(
@@ -1337,6 +1393,12 @@ impl Interpreter {
             "query".to_string(),
             Value::BuiltinFn {
                 name: "db.query".to_string(),
+            },
+        );
+        methods.insert(
+            "find".to_string(),
+            Value::BuiltinFn {
+                name: "db.find".to_string(),
             },
         );
         methods.insert(
