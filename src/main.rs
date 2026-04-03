@@ -14,13 +14,44 @@ fn main() {
         return;
     }
 
-    if args.len() < 2 {
-        eprintln!("Usage: pact <file.pact> [--ast]");
-        eprintln!("       pact run <file.pact>    Execute a .pact file");
-        eprintln!("       pact test <file.pact>   Run test blocks in a .pact file");
-        eprintln!("  Tokenizes a .pact file and prints the token stream.");
-        eprintln!("  --ast  Parse and print the AST instead of tokens.");
-        process::exit(1);
+    if args.len() < 2 || (args.len() == 2 && (args[1] == "--help" || args[1] == "-h")) {
+        println!("pact {} — The PACT programming language", env!("CARGO_PKG_VERSION"));
+        println!();
+        println!("Usage:");
+        println!("  pact run <file.pact>       Run a .pact program (starts HTTP server if app is declared)");
+        println!("  pact test <file.pact>      Run test blocks");
+        println!("  pact <file.pact> --ast     Print the AST");
+        println!("  pact <file.pact>           Print the token stream");
+        println!();
+        println!("Quick start:");
+        println!("  1. Create a file (e.g. hello.pact):");
+        println!();
+        println!("     route GET \"/hello\" {{");
+        println!("       intent \"Say hello\"");
+        println!("       respond 200 with {{ message: \"Hello from PACT\" }}");
+        println!("     }}");
+        println!("     app Hello {{ port: 8080 }}");
+        println!();
+        println!("  2. Run it:");
+        println!("     pact run hello.pact");
+        println!();
+        println!("  3. Test it:");
+        println!("     curl http://localhost:8080/hello");
+        println!();
+        println!("Language reference:");
+        println!("  Variables:   let name: Type = value");
+        println!("  Functions:   intent \"desc\" followed by fn name(args) -> Type {{ body }}");
+        println!("  Pipelines:   data | filter where .x > 0 | map to .name | take first 5");
+        println!("  Routes:      route GET \"/path/{{id}}\" {{ intent \"desc\" ... respond 200 with expr }}");
+        println!("  Errors:      fn foo() -> T or NotFound  ...  | on NotFound: respond 404 with ...");
+        println!("  Effects:     needs db, rng, time");
+        println!("  Builtins:    print(), list(), db.insert(), db.query(), rng.hex(), time.now()");
+        println!("  Str methods: .length() .contains() .to_upper() .to_lower() .trim() .split() .replace()");
+        println!("  List methods: .length() .contains() .push() .get() .join() .is_empty() .first() .last()");
+        if args.len() < 2 {
+            process::exit(1);
+        }
+        return;
     }
 
     // pact test <file>
