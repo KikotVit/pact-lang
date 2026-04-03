@@ -970,6 +970,24 @@ impl Interpreter {
                 }
                 Ok(Value::Nothing)
             }
+            "log.info" => {
+                if let Some(msg) = args.first() {
+                    eprintln!("[INFO] {}", msg);
+                }
+                Ok(Value::Nothing)
+            }
+            "log.warn" => {
+                if let Some(msg) = args.first() {
+                    eprintln!("[WARN] {}", msg);
+                }
+                Ok(Value::Nothing)
+            }
+            "log.error" => {
+                if let Some(msg) = args.first() {
+                    eprintln!("[ERROR] {}", msg);
+                }
+                Ok(Value::Nothing)
+            }
             _ => Err(self.error(&format!("Unknown builtin '{}'", name))),
         }
     }
@@ -1212,6 +1230,35 @@ impl Interpreter {
             "print".to_string(),
             Value::BuiltinFn {
                 name: "print".to_string(),
+            },
+            false,
+        );
+
+        // log effect
+        let mut log_methods = HashMap::new();
+        log_methods.insert(
+            "info".to_string(),
+            Value::BuiltinFn {
+                name: "log.info".to_string(),
+            },
+        );
+        log_methods.insert(
+            "warn".to_string(),
+            Value::BuiltinFn {
+                name: "log.warn".to_string(),
+            },
+        );
+        log_methods.insert(
+            "error".to_string(),
+            Value::BuiltinFn {
+                name: "log.error".to_string(),
+            },
+        );
+        self.global.bind(
+            "log".to_string(),
+            Value::Effect {
+                name: "log".to_string(),
+                methods: log_methods,
             },
             false,
         );
