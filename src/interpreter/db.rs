@@ -63,28 +63,30 @@ impl DbBackend {
 
     // ── CRUD ────────────────────────────────────────────────────────
 
-    /// Insert a value into a table.
-    pub fn insert(&mut self, table: &str, value: Value) -> Result<(), RuntimeError> {
+    /// Insert a value into a table. Returns the inserted value.
+    pub fn insert(&mut self, table: &str, value: Value) -> Result<Value, RuntimeError> {
         match self {
             DbBackend::Memory { tables } => {
+                let ret = value.clone();
                 tables
                     .entry(table.to_string())
                     .or_insert_with(Vec::new)
                     .push(value);
-                Ok(())
+                Ok(ret)
             }
             DbBackend::Sqlite { .. } => todo!("Sqlite insert"),
         }
     }
 
     /// Query all rows from a table, optionally filtered by a struct.
-    pub fn query(&self, table: &str, filter: Option<&Value>) -> Result<Vec<Value>, RuntimeError> {
+    /// Returns `Value::List`.
+    pub fn query(&self, table: &str, filter: Option<&Value>) -> Result<Value, RuntimeError> {
         match self {
             DbBackend::Memory { tables } => {
                 let items = tables.get(table).cloned().unwrap_or_default();
                 match filter {
-                    Some(f) => Ok(filter_by_struct(&items, f)),
-                    None => Ok(items),
+                    Some(f) => Ok(Value::List(filter_by_struct(&items, f))),
+                    None => Ok(Value::List(items)),
                 }
             }
             DbBackend::Sqlite { .. } => todo!("Sqlite query"),
@@ -92,59 +94,77 @@ impl DbBackend {
     }
 
     /// Find the first row matching a filter.
-    pub fn find(&self, table: &str, filter: &Value) -> Result<Option<Value>, RuntimeError> {
+    /// Returns the item or `Value::Error { variant: "NotFound" }`.
+    pub fn find(&self, table: &str, filter: &Value) -> Result<Value, RuntimeError> {
         match self {
             DbBackend::Memory { tables } => {
                 let items = tables.get(table).cloned().unwrap_or_default();
                 let matches = filter_by_struct(&items, filter);
-                Ok(matches.into_iter().next())
+                match matches.into_iter().next() {
+                    Some(item) => Ok(item),
+                    None => Ok(Value::Error {
+                        variant: "NotFound".to_string(),
+                        fields: None,
+                    }),
+                }
             }
             DbBackend::Sqlite { .. } => todo!("Sqlite find"),
         }
     }
 
     /// Update a row identified by `id` with `new_value`.
+    /// Returns the updated value or `Value::Error { variant: "NotFound" }`.
     pub fn update(
         &mut self,
         table: &str,
         id: &str,
         new_value: Value,
-    ) -> Result<bool, RuntimeError> {
+    ) -> Result<Value, RuntimeError> {
         match self {
             DbBackend::Memory { tables } => {
                 if let Some(rows) = tables.get_mut(table) {
                     for row in rows.iter_mut() {
                         if let Value::Struct { fields, .. } = row {
                             if fields.get("id") == Some(&Value::String(id.to_string())) {
-                                *row = new_value;
-                                return Ok(true);
+                                *row = new_value.clone();
+                                return Ok(new_value);
                             }
                         }
                     }
                 }
-                Ok(false)
+                Ok(Value::Error {
+                    variant: "NotFound".to_string(),
+                    fields: None,
+                })
             }
             DbBackend::Sqlite { .. } => todo!("Sqlite update"),
         }
     }
 
     /// Delete a row identified by `id`.
-    pub fn delete(&mut self, table: &str, id: &str) -> Result<bool, RuntimeError> {
+    /// Returns the removed item or `Value::Error { variant: "NotFound" }`.
+    pub fn delete(&mut self, table: &str, id: &str) -> Result<Value, RuntimeError> {
         match self {
             DbBackend::Memory { tables } => {
                 if let Some(rows) = tables.get_mut(table) {
-                    let before = rows.len();
+                    let mut removed = None;
                     rows.retain(|row| {
                         if let Value::Struct { fields, .. } = row {
-                            fields.get("id") != Some(&Value::String(id.to_string()))
-                        } else {
-                            true
+                            if fields.get("id") == Some(&Value::String(id.to_string())) {
+                                removed = Some(row.clone());
+                                return false;
+                            }
                         }
+                        true
                     });
-                    Ok(rows.len() < before)
-                } else {
-                    Ok(false)
+                    if let Some(item) = removed {
+                        return Ok(item);
+                    }
                 }
+                Ok(Value::Error {
+                    variant: "NotFound".to_string(),
+                    fields: None,
+                })
             }
             DbBackend::Sqlite { .. } => todo!("Sqlite delete"),
         }

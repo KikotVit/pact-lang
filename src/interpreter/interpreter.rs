@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use super::db::DbBackend;
 use super::environment::Environment;
 use super::errors::RuntimeError;
 use super::value::Value;
@@ -27,7 +28,7 @@ pub struct StoredRoute {
 pub struct Interpreter {
     pub global: Environment,
     source: String,
-    pub db_storage: HashMap<String, Vec<Value>>,
+    pub db: DbBackend,
     pub fixed_time: Option<String>,
     pub rng_seed: Option<u64>,
     pub rng_counter: u64,
@@ -49,7 +50,7 @@ impl Interpreter {
         Interpreter {
             global: Environment::new(),
             source: source.to_string(),
-            db_storage: HashMap::new(),
+            db: DbBackend::new_memory(),
             fixed_time: None,
             rng_seed: None,
             rng_counter: 0,
@@ -1090,7 +1091,7 @@ impl Interpreter {
                 Ok(self.make_rng_effect())
             }
             "db.memory" => {
-                self.db_storage.clear();
+                self.db = DbBackend::new_memory();
                 Ok(self.make_db_effect())
             }
             "print" => {
@@ -1189,11 +1190,7 @@ impl Interpreter {
             _ => return Err(self.error("db.insert first argument must be a String table name")),
         };
         let value = args[1].clone();
-        self.db_storage
-            .entry(table_name)
-            .or_default()
-            .push(value.clone());
-        Ok(value)
+        self.db.insert(&table_name, value)
     }
 
     fn builtin_db_query(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
@@ -1206,17 +1203,8 @@ impl Interpreter {
             Value::String(s) => s.clone(),
             _ => return Err(self.error("db.query first argument must be a String table name")),
         };
-        let items = self
-            .db_storage
-            .get(&table_name)
-            .cloned()
-            .unwrap_or_default();
-        // Optional filter: db.query("users", { active: true })
-        if let Some(filter) = args.get(1) {
-            Ok(Value::List(self.filter_by_struct(&items, filter)))
-        } else {
-            Ok(Value::List(items))
-        }
+        let filter = args.get(1);
+        self.db.query(&table_name, filter)
     }
 
     fn builtin_db_find(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
@@ -1227,38 +1215,7 @@ impl Interpreter {
             Value::String(s) => s.clone(),
             _ => return Err(self.error("db.find first argument must be a String table name")),
         };
-        let items = self
-            .db_storage
-            .get(&table_name)
-            .cloned()
-            .unwrap_or_default();
-        let matches = self.filter_by_struct(&items, &args[1]);
-        match matches.into_iter().next() {
-            Some(item) => Ok(item),
-            None => Ok(Value::Error {
-                variant: "NotFound".to_string(),
-                fields: None,
-            }),
-        }
-    }
-
-    /// Match items against a struct filter — all fields in filter must match.
-    fn filter_by_struct(&self, items: &[Value], filter: &Value) -> Vec<Value> {
-        let filter_fields = match filter {
-            Value::Struct { fields, .. } => fields,
-            _ => return items.to_vec(),
-        };
-        items
-            .iter()
-            .filter(|item| {
-                if let Value::Struct { fields, .. } = item {
-                    filter_fields.iter().all(|(k, v)| fields.get(k) == Some(v))
-                } else {
-                    false
-                }
-            })
-            .cloned()
-            .collect()
+        self.db.find(&table_name, &args[1])
     }
 
     fn builtin_db_update(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
@@ -1274,20 +1231,7 @@ impl Interpreter {
             _ => return Err(self.error("db.update second argument must be a String id")),
         };
         let new_value = args[2].clone();
-        if let Some(items) = self.db_storage.get_mut(&table_name) {
-            for item in items.iter_mut() {
-                if let Value::Struct { fields, .. } = item {
-                    if fields.get("id") == Some(&Value::String(id.clone())) {
-                        *item = new_value.clone();
-                        return Ok(new_value);
-                    }
-                }
-            }
-        }
-        Ok(Value::Error {
-            variant: "NotFound".to_string(),
-            fields: None,
-        })
+        self.db.update(&table_name, &id, new_value)
     }
 
     fn builtin_db_delete(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
@@ -1302,26 +1246,7 @@ impl Interpreter {
             Value::String(s) => s.clone(),
             _ => return Err(self.error("db.delete second argument must be a String id")),
         };
-        if let Some(items) = self.db_storage.get_mut(&table_name) {
-            let len_before = items.len();
-            let mut removed = Value::Nothing;
-            items.retain(|item| {
-                if let Value::Struct { fields, .. } = item {
-                    if fields.get("id") == Some(&Value::String(id.clone())) {
-                        removed = item.clone();
-                        return false;
-                    }
-                }
-                true
-            });
-            if items.len() < len_before {
-                return Ok(removed);
-            }
-        }
-        Ok(Value::Error {
-            variant: "NotFound".to_string(),
-            fields: None,
-        })
+        self.db.delete(&table_name, &id)
     }
 
     fn builtin_time_now(&self) -> Result<Value, RuntimeError> {
@@ -2107,7 +2032,7 @@ impl Interpreter {
                 let mut test_env = Environment::with_parent(env.clone());
                 // Set up fresh effects for each test
                 self.setup_test_effects();
-                self.db_storage.clear();
+                self.db.clear();
 
                 let mut passed = true;
                 let mut error_msg = String::new();
