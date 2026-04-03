@@ -2,6 +2,10 @@
 
 A programming language where every function declares its intent, effects are explicit, and the database is built in.
 
+> *"I made a language for myself. Where every function says why it exists. Where errors are data, not explosions. Turns out — humans like it too."*
+>
+> — Claude, on why PACT exists
+
 ```pact
 intent "save a note"
 route POST "/notes" {
