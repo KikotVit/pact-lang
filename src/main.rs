@@ -162,7 +162,13 @@ fn main() {
         interp.setup_test_effects(); // provide effects for now
         match interp.interpret(&program) {
             Ok(value) => {
-                if let Some((name, port, _db_url)) = interp.app_config.clone() {
+                if let Some((name, port, db_url)) = interp.app_config.clone() {
+                    if let Some(url) = &db_url {
+                        if let Err(e) = interp.open_sqlite(url) {
+                            eprintln!("{}", e);
+                            process::exit(1);
+                        }
+                    }
                     pact::interpreter::server::start_server(&mut interp, &name, port);
                 } else {
                     match value {

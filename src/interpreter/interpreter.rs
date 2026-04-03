@@ -65,6 +65,17 @@ impl Interpreter {
         }
     }
 
+    pub fn open_sqlite(&mut self, url: &str) -> Result<(), RuntimeError> {
+        if !url.starts_with("sqlite://") {
+            let mut err = self.error(&format!("Invalid database URL '{}'", url));
+            err.hint = Some("Expected format: sqlite://path/to/file.db".to_string());
+            return Err(err);
+        }
+        let path = &url["sqlite://".len()..];
+        self.db = DbBackend::new_sqlite(path)?;
+        Ok(())
+    }
+
     pub fn interpret(&mut self, program: &Program) -> Result<Value, RuntimeError> {
         let mut result = Value::Nothing;
         // Clone statements to avoid borrow conflicts (self is &mut for eval)
@@ -1052,6 +1063,18 @@ impl Interpreter {
     }
 
     fn call_builtin(&mut self, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        // Error if db.* called without db config in app mode
+        if name.starts_with("db.") && name != "db.memory" {
+            if let Some((_, _, ref db_url)) = self.app_config {
+                if db_url.is_none() && matches!(self.db, DbBackend::Memory { .. }) {
+                    let mut err = self.error("Database not configured");
+                    err.hint = Some(
+                        "Add db to your app declaration:\n\n  app MyService {\n    port: 8080,\n    db: \"sqlite://data.db\",\n  }".to_string()
+                    );
+                    return Err(err);
+                }
+            }
+        }
         match name {
             "list" => Ok(Value::List(args)),
             "db.insert" => self.builtin_db_insert(args),
@@ -2954,6 +2977,21 @@ test "add works" {
         } else {
             panic!("Expected Response");
         }
+    }
+
+    #[test]
+    fn eval_db_no_config_with_app_errors() {
+        let input = "app TestApp {\n  port: 8080,\n}\ndb.insert(\"users\", User { name: \"Alice\" })";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.setup_test_effects();
+        let result = interp.interpret(&program);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("Database not configured"));
     }
 
     #[test]
