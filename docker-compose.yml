@@ -1,0 +1,12 @@
+services:
+  api:
+    build: .
+    command: ["run", "examples/api.pact"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./examples:/app/examples
+      - pact-data:/data
+
+volumes:
+  pact-data:

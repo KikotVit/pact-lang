@@ -42,6 +42,12 @@ curl -fsSL https://raw.githubusercontent.com/KikotVit/pact-lang/master/scripts/i
 
 macOS (ARM & Intel) and Linux x86_64. Single binary, ~5MB, zero runtime dependencies.
 
+Or with Docker:
+
+```sh
+docker compose up --build
+```
+
 ## Why
 
 Most backend code is glue: parse request, validate, call database, handle errors, serialize response. The actual logic is a few lines buried under boilerplate.
