@@ -78,16 +78,14 @@ fn main() {
                     println!("{}", content);
                 }
                 None => {
-                    // Try prefix match for "did you mean"
-                    let topics = pact::docs::list_topics();
-                    let suggestion = topics.iter().find(|(name, _)| name.starts_with(topic));
-                    if let Some((name, _)) = suggestion {
-                        eprintln!("Unknown topic '{}'. Did you mean '{}'?", topic, name);
+                    if let Some(suggestion) = pact::docs::suggest_topic(topic) {
+                        eprintln!("Unknown topic '{}'. Did you mean '{}'?", topic, suggestion);
                     } else {
                         eprintln!("Unknown topic '{}'.", topic);
                     }
                     eprintln!();
-                    let names: Vec<&str> = topics.iter().map(|(n, _)| *n).collect();
+                    let names: Vec<&str> =
+                        pact::docs::list_topics().iter().map(|(n, _)| *n).collect();
                     eprintln!("Available topics: {}", names.join(", "));
                     process::exit(1);
                 }

@@ -17,6 +17,13 @@ pub fn get_doc(topic: &str) -> Option<&'static str> {
     }
 }
 
+pub fn suggest_topic(input: &str) -> Option<&'static str> {
+    list_topics()
+        .iter()
+        .find(|(name, _)| name.starts_with(input))
+        .map(|(name, _)| *name)
+}
+
 pub fn list_topics() -> Vec<(&'static str, &'static str)> {
     vec![
         ("quickstart", "Build your first PACT API in minutes"),

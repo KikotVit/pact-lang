@@ -232,10 +232,15 @@ fn execute_pact_docs(params: &serde_json::Value) -> serde_json::Value {
             None => {
                 let topics = crate::docs::list_topics();
                 let names: Vec<&str> = topics.iter().map(|(n, _)| *n).collect();
+                let hint = match crate::docs::suggest_topic(t) {
+                    Some(s) => format!(" Did you mean '{}'?", s),
+                    None => String::new(),
+                };
                 make_tool_result(
                     &format!(
-                        "Unknown topic '{}'. Available topics: {}",
+                        "Unknown topic '{}'.{} Available topics: {}",
                         t,
+                        hint,
                         names.join(", ")
                     ),
                     true,
