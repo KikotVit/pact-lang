@@ -44,8 +44,10 @@ macOS (ARM & Intel) and Linux x86_64. Single binary, ~5MB, zero runtime dependen
 
 Or with Docker:
 
-```sh
-docker compose up --build
+```dockerfile
+FROM ghcr.io/kikotvit/pact-lang:latest
+COPY app.pact .
+CMD ["run", "app.pact"]
 ```
 
 ## Why
