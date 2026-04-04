@@ -25,6 +25,7 @@ fn main() {
             "  pact run <file.pact>       Run a .pact program (starts HTTP server if app is declared)"
         );
         println!("  pact test <file.pact>      Run test blocks");
+        println!("  pact docs [topic]          Show language documentation");
         println!("  pact mcp                   Start MCP tool server (stdio)");
         println!("  pact <file.pact> --ast     Print the AST");
         println!("  pact <file.pact>           Print the token stream");
@@ -64,6 +65,40 @@ fn main() {
         );
         if args.len() < 2 {
             process::exit(1);
+        }
+        return;
+    }
+
+    // pact docs [topic]
+    if args.len() >= 2 && args[1] == "docs" {
+        if args.len() >= 3 {
+            let topic = &args[2];
+            match pact::docs::get_doc(topic) {
+                Some(content) => {
+                    println!("{}", content);
+                }
+                None => {
+                    // Try prefix match for "did you mean"
+                    let topics = pact::docs::list_topics();
+                    let suggestion = topics.iter().find(|(name, _)| name.starts_with(topic));
+                    if let Some((name, _)) = suggestion {
+                        eprintln!("Unknown topic '{}'. Did you mean '{}'?", topic, name);
+                    } else {
+                        eprintln!("Unknown topic '{}'.", topic);
+                    }
+                    eprintln!();
+                    let names: Vec<&str> = topics.iter().map(|(n, _)| *n).collect();
+                    eprintln!("Available topics: {}", names.join(", "));
+                    process::exit(1);
+                }
+            }
+        } else {
+            // pact docs — list all topics
+            println!("PACT documentation topics:\n");
+            for (name, desc) in pact::docs::list_topics() {
+                println!("  {:<12} {}", name, desc);
+            }
+            println!("\nUsage: pact docs <topic>");
         }
         return;
     }

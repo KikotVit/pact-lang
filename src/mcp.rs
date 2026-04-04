@@ -223,6 +223,38 @@ fn execute_pact_run(params: &serde_json::Value) -> serde_json::Value {
     }
 }
 
+fn execute_pact_docs(params: &serde_json::Value) -> serde_json::Value {
+    let topic = params.get("topic").and_then(|v| v.as_str());
+
+    match topic {
+        Some(t) if !t.is_empty() => match crate::docs::get_doc(t) {
+            Some(content) => make_tool_result(content, false),
+            None => {
+                let topics = crate::docs::list_topics();
+                let names: Vec<&str> = topics.iter().map(|(n, _)| *n).collect();
+                make_tool_result(
+                    &format!(
+                        "Unknown topic '{}'. Available topics: {}",
+                        t,
+                        names.join(", ")
+                    ),
+                    true,
+                )
+            }
+        },
+        _ => {
+            // No topic — list all topics
+            let topics = crate::docs::list_topics();
+            let mut text = String::from("Available PACT documentation topics:\n\n");
+            for (name, desc) in &topics {
+                text.push_str(&format!("  {:<12} {}\n", name, desc));
+            }
+            text.push_str("\nCall pact_docs with a topic name for full documentation.");
+            make_tool_result(&text, false)
+        }
+    }
+}
+
 // --- Protocol handlers ---
 
 fn handle_initialize(id: &serde_json::Value) -> serde_json::Value {
@@ -281,6 +313,20 @@ fn handle_tools_list(id: &serde_json::Value) -> serde_json::Value {
                         },
                         "additionalProperties": false
                     }
+                },
+                {
+                    "name": "pact_docs",
+                    "description": "Get PACT language documentation. Returns markdown reference for a topic, or lists all available topics if no topic is specified.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "topic": {
+                                "type": "string",
+                                "description": "Topic name (e.g. 'quickstart', 'pipeline', 'route', 'db'). Omit to list all topics."
+                            }
+                        },
+                        "additionalProperties": false
+                    }
                 }
             ]
         }),
@@ -297,6 +343,7 @@ fn handle_tools_call(id: &serde_json::Value, params: &serde_json::Value) -> serd
     let result = match tool_name {
         "pact_run" => execute_pact_run(&arguments),
         "pact_check" => execute_pact_check(&arguments),
+        "pact_docs" => execute_pact_docs(&arguments),
         _ => make_tool_result(&format!("Unknown tool: '{}'", tool_name), true),
     };
 
@@ -389,11 +436,13 @@ mod tests {
         let msg = serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
         let resp = handle_message(&msg).unwrap();
         let tools = resp["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
         assert_eq!(tools[0]["name"], "pact_run");
         assert_eq!(tools[1]["name"], "pact_check");
+        assert_eq!(tools[2]["name"], "pact_docs");
         assert!(tools[0]["inputSchema"].is_object());
         assert!(tools[1]["inputSchema"].is_object());
+        assert!(tools[2]["inputSchema"].is_object());
     }
 
     #[test]
@@ -521,5 +570,69 @@ mod tests {
         });
         let resp = handle_message(&msg).unwrap();
         assert_eq!(resp["result"]["isError"], true);
+    }
+
+    #[test]
+    fn test_pact_docs_with_topic() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "pact_docs",
+                "arguments": {"topic": "quickstart"}
+            }
+        });
+        let resp = handle_message(&msg).unwrap();
+        assert!(
+            resp["result"].get("isError").is_none(),
+            "pact_docs with valid topic should not return isError"
+        );
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("pact"),
+            "quickstart docs should contain 'pact'"
+        );
+    }
+
+    #[test]
+    fn test_pact_docs_list() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "pact_docs",
+                "arguments": {}
+            }
+        });
+        let resp = handle_message(&msg).unwrap();
+        assert!(
+            resp["result"].get("isError").is_none(),
+            "pact_docs list should not return isError"
+        );
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("quickstart"),
+            "topic list should contain 'quickstart'"
+        );
+    }
+
+    #[test]
+    fn test_pact_docs_unknown() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "pact_docs",
+                "arguments": {"topic": "nonexistent"}
+            }
+        });
+        let resp = handle_message(&msg).unwrap();
+        assert_eq!(
+            resp["result"]["isError"], true,
+            "pact_docs with unknown topic should return isError: true"
+        );
     }
 }

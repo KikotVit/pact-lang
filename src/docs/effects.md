@@ -1,0 +1,86 @@
+# Effects
+
+Effects declare what side effects a function or route uses. Declare them with `needs`.
+
+## Syntax in functions
+
+```pact
+intent "save a record"
+fn save(data: Struct) -> Struct
+  needs db, time
+{
+  data
+}
+```
+
+## Syntax in routes
+
+```pact
+intent "create item"
+route POST "/items" {
+  needs db, rng
+  let item: Struct = { id: rng.hex(8), name: request.body.name }
+  db.insert("items", item)
+  respond 201 with item
+}
+```
+
+## db — database access
+
+Provides `db.insert`, `db.query`, `db.find`, `db.update`, `db.delete`.
+
+```pact
+db.insert("users", { id: "1", name: "Alice" })
+db.query("users") | filter where .active == true
+db.find("users", { id: "1" })
+db.update("users", "1", { id: "1", name: "Bob" })
+db.delete("users", "1")
+```
+
+## time — current time
+
+```pact
+let now: String = time.now()
+```
+
+## rng — random values
+
+```pact
+let id: String = rng.uuid()
+let hex: String = rng.hex(8)
+```
+
+## auth — authentication
+
+```pact
+auth.require("admin")
+```
+
+## log — logging
+
+```pact
+log.info("request received")
+log.warn("deprecated endpoint")
+log.error("something went wrong")
+```
+
+## env — environment variables
+
+```pact
+let key: String = env.get("API_KEY")
+let secret: String = env.require("SECRET")
+```
+
+## Mock effects in tests
+
+```pact
+test "mock all effects" {
+  using db = db.memory()
+  using rng = rng.deterministic(42)
+  using time = time.fixed("2026-04-04T12:00:00Z")
+
+  assert rng.hex(4).length() > 0
+}
+```
+
+> See also: fn, route, test, db
