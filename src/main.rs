@@ -25,6 +25,7 @@ fn main() {
             "  pact run <file.pact>       Run a .pact program (starts HTTP server if app is declared)"
         );
         println!("  pact test <file.pact>      Run test blocks");
+        println!("  pact mcp                   Start MCP tool server (stdio)");
         println!("  pact <file.pact> --ast     Print the AST");
         println!("  pact <file.pact>           Print the token stream");
         println!();
@@ -64,6 +65,12 @@ fn main() {
         if args.len() < 2 {
             process::exit(1);
         }
+        return;
+    }
+
+    // pact mcp
+    if args.len() >= 2 && args[1] == "mcp" {
+        pact::mcp::run_mcp_server();
         return;
     }
 
