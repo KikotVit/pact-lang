@@ -1,4 +1,5 @@
 /// PACT Abstract Syntax Tree types
+use crate::lexer::token::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -12,6 +13,7 @@ pub enum Statement {
         mutable: bool,
         type_ann: TypeExpr,
         value: Expr,
+        span: Option<Span>,
     },
     FnDecl {
         name: String,
@@ -21,6 +23,7 @@ pub enum Statement {
         error_types: Vec<String>,
         effects: Vec<String>,
         body: Vec<Statement>,
+        span: Option<Span>,
     },
     TypeDecl(TypeDecl),
     Use {
@@ -29,6 +32,7 @@ pub enum Statement {
     Return {
         value: Option<Expr>,
         condition: Option<Expr>,
+        span: Option<Span>,
     },
     Expression(Expr),
     TestBlock {
@@ -110,6 +114,7 @@ pub enum Expr {
     FnCall {
         callee: Box<Expr>,
         args: Vec<Expr>,
+        span: Option<Span>,
     },
     Pipeline {
         source: Box<Expr>,
@@ -123,6 +128,7 @@ pub enum Expr {
     Match {
         subject: Box<Expr>,
         arms: Vec<MatchArm>,
+        span: Option<Span>,
     },
     Block(Vec<Statement>),
     StructLiteral {

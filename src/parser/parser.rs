@@ -507,12 +507,14 @@ impl Parser {
                     };
                 }
                 TokenKind::LParen => {
+                    let call_span = self.current().span.clone();
                     self.advance(); // consume '('
                     let args = self.parse_args_list()?;
                     self.expect(&TokenKind::RParen)?;
                     expr = Expr::FnCall {
                         callee: Box::new(expr),
                         args,
+                        span: Some(call_span),
                     };
                 }
                 TokenKind::Question => {
@@ -636,6 +638,7 @@ impl Parser {
     }
 
     fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
+        let span = self.current().span.clone();
         self.advance(); // consume `match`
         let subject = self.parse_expression()?;
         self.push_block("match");
@@ -654,6 +657,7 @@ impl Parser {
         Ok(Expr::Match {
             subject: Box::new(subject),
             arms,
+            span: Some(span),
         })
     }
 
@@ -798,6 +802,7 @@ impl Parser {
 
     fn parse_let_or_var(&mut self, mutable: bool) -> Result<Statement, ParseError> {
         let keyword = if mutable { "var" } else { "let" };
+        let span = self.current().span.clone();
         self.advance(); // consume let/var
         let name = self.expect_identifier()?;
         if self.at(&TokenKind::Assign) {
@@ -821,16 +826,19 @@ impl Parser {
             mutable,
             type_ann,
             value,
+            span: Some(span),
         })
     }
 
     fn parse_return(&mut self) -> Result<Statement, ParseError> {
+        let span = self.current().span.clone();
         self.advance(); // consume return
         // If next is newline/eof/rbrace → return with no value
         if self.at(&TokenKind::Newline) || self.at_eof() || self.at(&TokenKind::RBrace) {
             return Ok(Statement::Return {
                 value: None,
                 condition: None,
+                span: Some(span),
             });
         }
         let value = self.parse_expression()?;
@@ -843,6 +851,7 @@ impl Parser {
         Ok(Statement::Return {
             value: Some(value),
             condition,
+            span: Some(span),
         })
     }
 
@@ -872,6 +881,7 @@ impl Parser {
     }
 
     fn parse_fn_decl(&mut self, intent: Option<String>) -> Result<Statement, ParseError> {
+        let span = self.current().span.clone();
         self.expect(&TokenKind::Fn)?;
         let name = self.expect_identifier()?;
 
@@ -937,6 +947,7 @@ impl Parser {
             error_types,
             effects,
             body,
+            span: Some(span),
         })
     }
 
@@ -1444,24 +1455,24 @@ mod tests {
 
     #[test]
     fn parse_fn_call_no_args() {
-        assert_eq!(
-            parse_expr("foo()"),
-            Expr::FnCall {
-                callee: Box::new(Expr::Identifier("foo".to_string())),
-                args: vec![],
-            },
-        );
+        let expr = parse_expr("foo()");
+        if let Expr::FnCall { callee, args, .. } = &expr {
+            assert_eq!(**callee, Expr::Identifier("foo".to_string()));
+            assert!(args.is_empty());
+        } else {
+            panic!("Expected FnCall");
+        }
     }
 
     #[test]
     fn parse_fn_call_with_args() {
-        assert_eq!(
-            parse_expr("add(1, 2)"),
-            Expr::FnCall {
-                callee: Box::new(Expr::Identifier("add".to_string())),
-                args: vec![Expr::IntLiteral(1), Expr::IntLiteral(2)],
-            },
-        );
+        let expr = parse_expr("add(1, 2)");
+        if let Expr::FnCall { callee, args, .. } = &expr {
+            assert_eq!(**callee, Expr::Identifier("add".to_string()));
+            assert_eq!(args, &[Expr::IntLiteral(1), Expr::IntLiteral(2)]);
+        } else {
+            panic!("Expected FnCall");
+        }
     }
 
     #[test]
@@ -1469,19 +1480,20 @@ mod tests {
         let expr = parse_expr("db.query(x)");
         assert!(matches!(
             expr,
-            Expr::FnCall { ref callee, ref args } if matches!(**callee, Expr::FieldAccess { .. }) && args.len() == 1
+            Expr::FnCall { ref callee, ref args, .. } if matches!(**callee, Expr::FieldAccess { .. }) && args.len() == 1
         ));
     }
 
     #[test]
     fn parse_error_propagation() {
-        assert_eq!(
-            parse_expr("foo()?"),
-            Expr::ErrorPropagation(Box::new(Expr::FnCall {
-                callee: Box::new(Expr::Identifier("foo".to_string())),
-                args: vec![],
-            })),
-        );
+        let expr = parse_expr("foo()?");
+        if let Expr::ErrorPropagation(inner) = &expr {
+            assert!(matches!(&**inner, Expr::FnCall { callee, args, .. }
+                if matches!(&**callee, Expr::Identifier(n) if n == "foo") && args.is_empty()
+            ));
+        } else {
+            panic!("Expected ErrorPropagation");
+        }
     }
 
     #[test]
@@ -1941,7 +1953,8 @@ mod tests {
             &prog.statements[0],
             Statement::Return {
                 value: Some(_),
-                condition: None
+                condition: None,
+                ..
             }
         ));
     }
@@ -1953,7 +1966,8 @@ mod tests {
             &prog.statements[0],
             Statement::Return {
                 value: Some(_),
-                condition: Some(_)
+                condition: Some(_),
+                ..
             }
         ));
     }

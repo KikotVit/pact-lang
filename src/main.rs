@@ -24,6 +24,7 @@ fn main() {
         println!(
             "  pact run <file.pact>       Run a .pact program (starts HTTP server if app is declared)"
         );
+        println!("  pact check <file.pact>     Check syntax and types");
         println!("  pact test <file.pact>      Run test blocks");
         println!("  pact docs [topic]          Show language documentation");
         println!("  pact mcp                   Start MCP tool server (stdio)");
@@ -104,6 +105,64 @@ fn main() {
     // pact mcp
     if args.len() >= 2 && args[1] == "mcp" {
         pact::mcp::run_mcp_server();
+        return;
+    }
+
+    // pact check <file>
+    if args.len() >= 3 && args[1] == "check" {
+        let filename = &args[2];
+        let source = match fs::read_to_string(filename) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error reading '{}': {}", filename, e);
+                process::exit(1);
+            }
+        };
+
+        let mut lexer = Lexer::new(&source);
+        let tokens = match lexer.tokenize() {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+        };
+
+        let mut parser = Parser::new(tokens, &source);
+        let program = match parser.parse() {
+            Ok(p) => p,
+            Err(errors) => {
+                for e in &errors {
+                    eprintln!("{}", e);
+                }
+                process::exit(1);
+            }
+        };
+
+        let diagnostics = pact::checker::check(&program, &source);
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.severity == pact::checker::Severity::Error)
+            .collect();
+        let warnings: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.severity == pact::checker::Severity::Warning)
+            .collect();
+
+        for d in &errors {
+            eprintln!("{}", d);
+        }
+        for d in &warnings {
+            eprintln!("{}", d);
+        }
+
+        if !errors.is_empty() || !warnings.is_empty() {
+            eprintln!("\n{} error(s), {} warning(s)", errors.len(), warnings.len());
+        }
+
+        if !errors.is_empty() {
+            process::exit(1);
+        }
         return;
     }
 

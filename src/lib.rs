@@ -1,3 +1,4 @@
+pub mod checker;
 pub mod docs;
 pub mod interpreter;
 pub mod lexer;

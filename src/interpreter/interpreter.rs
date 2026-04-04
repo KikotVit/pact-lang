@@ -137,7 +137,9 @@ impl Interpreter {
                 self.eval_use(path, env)?;
                 Ok(StmtResult::Value(Value::Nothing))
             }
-            Statement::Return { value, condition } => {
+            Statement::Return {
+                value, condition, ..
+            } => {
                 // If there's a condition, evaluate it — skip return if falsy
                 if let Some(cond_expr) = condition {
                     let cond_val = self.eval_expr(cond_expr, env)?;
@@ -491,14 +493,14 @@ impl Interpreter {
                 }
             }
             Expr::ErrorPropagation(inner) => self.eval_error_propagation(inner, env),
-            Expr::FnCall { callee, args } => self.eval_fn_call(callee, args, env),
+            Expr::FnCall { callee, args, .. } => self.eval_fn_call(callee, args, env),
             Expr::Pipeline { .. } => self.eval_pipeline(expr, env),
             Expr::If {
                 condition,
                 then_body,
                 else_body,
             } => self.eval_if(condition, then_body, else_body, env),
-            Expr::Match { subject, arms } => self.eval_match(subject, arms, env),
+            Expr::Match { subject, arms, .. } => self.eval_match(subject, arms, env),
             Expr::Block(stmts) => self.eval_block(stmts, env),
             Expr::StructLiteral { name, fields } => self.eval_struct_literal(name, fields, env),
             Expr::Ensure(predicate) => self.eval_ensure(predicate, env),

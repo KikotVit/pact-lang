@@ -106,14 +106,69 @@ fn execute_pact_check(params: &serde_json::Value) -> serde_json::Value {
 
     let mut parser = Parser::new(tokens, &source);
     match parser.parse() {
-        Ok(program) => make_tool_result(
-            &serde_json::json!({
-                "valid": true,
-                "statements": program.statements.len()
-            })
-            .to_string(),
-            false,
-        ),
+        Ok(program) => {
+            let stmt_count = program.statements.len();
+            let diagnostics = crate::checker::check(&program, &source);
+            let errors: Vec<serde_json::Value> = diagnostics
+                .iter()
+                .filter(|d| d.severity == crate::checker::Severity::Error)
+                .map(|d| {
+                    pact_error_json(
+                        "checker",
+                        d.line,
+                        d.column,
+                        &d.message,
+                        &d.hint,
+                        &d.source_line,
+                    )
+                })
+                .collect();
+            let warnings: Vec<serde_json::Value> = diagnostics
+                .iter()
+                .filter(|d| d.severity == crate::checker::Severity::Warning)
+                .map(|d| {
+                    pact_error_json(
+                        "checker",
+                        d.line,
+                        d.column,
+                        &d.message,
+                        &d.hint,
+                        &d.source_line,
+                    )
+                })
+                .collect();
+
+            if !errors.is_empty() {
+                let mut result = serde_json::json!({
+                    "valid": false,
+                    "statements": stmt_count,
+                    "errors": errors
+                });
+                if !warnings.is_empty() {
+                    result["warnings"] = serde_json::json!(warnings);
+                }
+                make_tool_result(&result.to_string(), true)
+            } else if !warnings.is_empty() {
+                make_tool_result(
+                    &serde_json::json!({
+                        "valid": true,
+                        "statements": stmt_count,
+                        "warnings": warnings
+                    })
+                    .to_string(),
+                    false,
+                )
+            } else {
+                make_tool_result(
+                    &serde_json::json!({
+                        "valid": true,
+                        "statements": stmt_count
+                    })
+                    .to_string(),
+                    false,
+                )
+            }
+        }
         Err(errors) => {
             let err_list: Vec<serde_json::Value> = errors
                 .iter()
@@ -303,7 +358,7 @@ fn handle_tools_list(id: &serde_json::Value) -> serde_json::Value {
                 },
                 {
                     "name": "pact_check",
-                    "description": "Parse and validate PACT code without executing it. Returns 'ok' if the code is syntactically valid, or structured error details with line numbers, columns, and hints.",
+                    "description": "Parse, validate syntax, and check types of PACT code without executing it. Returns validity status with any type errors or warnings, or structured error details with line numbers, columns, and hints.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -639,5 +694,69 @@ mod tests {
             resp["result"]["isError"], true,
             "pact_docs with unknown topic should return isError: true"
         );
+    }
+
+    #[test]
+    fn test_pact_check_type_error() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 20,
+            "method": "tools/call",
+            "params": {
+                "name": "pact_check",
+                "arguments": {"code": "let x: Int = \"hello\""}
+            }
+        });
+        let resp = handle_message(&msg).unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+        let text: serde_json::Value =
+            serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text["valid"], false);
+        let errors = text["errors"].as_array().unwrap();
+        assert!(!errors.is_empty());
+        assert_eq!(errors[0]["phase"], "checker");
+    }
+
+    #[test]
+    fn test_pact_check_warning_only() {
+        let code = "type Status = Active | Inactive | Banned\nlet s: Status = Active\nmatch s {\n  Active => 1\n  Inactive => 2\n}";
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "tools/call",
+            "params": {
+                "name": "pact_check",
+                "arguments": {"code": code}
+            }
+        });
+        let resp = handle_message(&msg).unwrap();
+        assert!(
+            resp["result"].get("isError").is_none(),
+            "warnings-only should not return isError"
+        );
+        let text: serde_json::Value =
+            serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text["valid"], true);
+        assert!(text["warnings"].as_array().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn test_pact_check_clean() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 22,
+            "method": "tools/call",
+            "params": {
+                "name": "pact_check",
+                "arguments": {"code": "let x: Int = 42"}
+            }
+        });
+        let resp = handle_message(&msg).unwrap();
+        assert!(resp["result"].get("isError").is_none());
+        let text: serde_json::Value =
+            serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text["valid"], true);
+        assert!(text.get("errors").is_none());
+        assert!(text.get("warnings").is_none());
     }
 }
