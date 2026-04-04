@@ -235,12 +235,12 @@ test "create_user assigns Viewer role and sets timestamp" {
   using db = db.memory()
 
   let user: Struct = create_user({
-    name: "Vitalii",
+    name: "John",
     email: "v@example.com",
     age: 30,
   }) | expect success
 
-  assert user.name == "Vitalii"
+  assert user.name == "John"
   assert user.role == "Viewer"
   assert user.active == true
   assert user.created_at == "2026-04-02T12:00:00Z"
@@ -252,7 +252,7 @@ test "create_user rejects duplicate email" {
   using db = db.memory()
 
   let data: Struct = {
-    name: "Vitalii",
+    name: "John",
     email: "v@example.com",
     age: 30,
   }
@@ -277,7 +277,7 @@ test "deactivate_user sets active to false" {
   using db = db.memory()
 
   let user: Struct = create_user({
-    name: "Vitalii",
+    name: "John",
     email: "v@example.com",
     age: 30,
   }) | expect success
@@ -285,7 +285,7 @@ test "deactivate_user sets active to false" {
   let deactivated: Struct = deactivate_user(user.id) | expect success
 
   assert deactivated.active == false
-  assert deactivated.name == "Vitalii"
+  assert deactivated.name == "John"
 }
 
 test "user_summary counts correctly" {

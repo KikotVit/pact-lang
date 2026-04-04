@@ -324,6 +324,19 @@ test "create user sets correct timestamp" {
 }
 ```
 
+Additional testing helpers:
+
+```pact
+// rng.hex(n) — generate hex string of n bytes
+let token: String = rng.hex(16)   // "a3f1..."
+
+// rng.sequence(...) — return values in order (for deterministic tests)
+using rng = rng.sequence("aaa", "bbb", "ccc")
+
+// auth.mock(...) — mock authenticated caller for testing
+using auth = auth.mock({ id: "user-1", role: "Admin" })
+```
+
 ---
 
 ## 11. HTTP / Backend
@@ -405,6 +418,22 @@ route DELETE "/users/{id}" {
 }
 ```
 
+### Hard delete
+
+```pact
+intent "permanently delete user"
+route DELETE "/users/{id}/permanent" {
+  needs db, auth
+
+  let caller: Struct = auth.require(request)?
+  return Forbidden if caller.role != Admin
+
+  db.delete("users", request.params.id)
+    | on success: respond 200 with { message: "Deleted" }
+    | on NotFound: respond 404 with { error: "User not found" }
+}
+```
+
 ### Validation (planned — parsed but not enforced yet)
 
 ```pact
@@ -465,13 +494,13 @@ app UserService { port: 8080 }
 |--------|------|
 | `db` | Database access: insert, query, find, update, delete |
 | `time` | Current time: now(), fixed() for testing |
-| `rng` | Random generation: uuid(), hex(n), deterministic() for testing |
+| `rng` | Random generation: uuid(), hex(n), sequence(...), deterministic() for testing |
 | `log` | Logging: info(), warn(), error() → stderr |
-| `auth` | Authentication: require(request) checks Authorization header |
+| `auth` | Authentication: require(request) checks Authorization header, mock(...) for testing |
 | `email` | *(planned)* Send email |
 | `http` | *(planned)* HTTP client |
 | `io` | *(planned)* File system access |
-| `env` | *(planned)* Environment variables |
+| `env` | Environment variables: get(key), require(key) |
 
 ---
 
