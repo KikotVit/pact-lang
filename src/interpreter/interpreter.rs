@@ -43,6 +43,8 @@ pub struct Interpreter {
     rng_sequence: Option<Vec<String>>,
     /// Effects blocked from global lookup (enforces `needs` declarations)
     blocked_effects: Vec<String>,
+    /// Mock responses for http effect: URL -> response struct
+    pub http_mock_responses: Option<HashMap<String, Value>>,
 }
 
 impl Interpreter {
@@ -62,6 +64,7 @@ impl Interpreter {
             app_config: None,
             rng_sequence: None,
             blocked_effects: Vec::new(),
+            http_mock_responses: None,
         }
     }
 
@@ -260,7 +263,7 @@ impl Interpreter {
                 } else if let Some(val) = self.global.lookup(name) {
                     Ok(val.clone())
                 } else {
-                    let known_effects = ["db", "auth", "log", "time", "rng", "env"];
+                    let known_effects = ["db", "auth", "log", "time", "rng", "env", "http"];
                     if known_effects.contains(&name.as_str()) {
                         let mut err = self
                             .error(&format!("Effect '{}' is not available in this scope", name));
@@ -1527,6 +1530,48 @@ impl Interpreter {
             },
             false,
         );
+
+        // http effect
+        self.global
+            .bind("http".to_string(), self.make_http_effect(), false);
+    }
+
+    fn make_http_effect(&self) -> Value {
+        let mut methods = HashMap::new();
+        methods.insert(
+            "get".to_string(),
+            Value::BuiltinFn {
+                name: "http.get".to_string(),
+            },
+        );
+        methods.insert(
+            "post".to_string(),
+            Value::BuiltinFn {
+                name: "http.post".to_string(),
+            },
+        );
+        methods.insert(
+            "put".to_string(),
+            Value::BuiltinFn {
+                name: "http.put".to_string(),
+            },
+        );
+        methods.insert(
+            "delete".to_string(),
+            Value::BuiltinFn {
+                name: "http.delete".to_string(),
+            },
+        );
+        methods.insert(
+            "mock".to_string(),
+            Value::BuiltinFn {
+                name: "http.mock".to_string(),
+            },
+        );
+        Value::Effect {
+            name: "http".to_string(),
+            methods,
+        }
     }
 
     fn make_db_effect(&self) -> Value {
