@@ -3497,4 +3497,92 @@ list(res.status, res.body)"#;
             Value::List(vec![Value::Int(200), Value::String("ok".to_string())])
         );
     }
+
+    #[test]
+    fn test_http_using_mock_in_test_block() {
+        let input = r#"test "fetch users via mock" {
+  using http = http.mock({
+    "https://api.example.com/users":
+      { status: 200, body: list({ name: "Alice", active: true }) }
+  })
+  let res: Struct = http.get("https://api.example.com/users")
+  assert res.status == 200
+  assert res.body.length() == 1
+}"#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.setup_test_effects();
+        let results = interp.run_tests(&program);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed, "Test failed: {:?}", results[0].error);
+    }
+
+    #[test]
+    fn test_http_using_mock_full_flow() {
+        let input = r#"test "pipeline through mock" {
+  using http = http.mock({
+    "https://api.example.com/users":
+      { status: 200, body: list(
+        { name: "Alice", active: true },
+        { name: "Bob", active: false }
+      )}
+  })
+  let names: List = http.get("https://api.example.com/users")
+    | .body
+    | filter where .active
+    | map to .name
+  assert names.length() == 1
+  assert names.first() == "Alice"
+}"#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.setup_test_effects();
+        let results = interp.run_tests(&program);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed, "Test failed: {:?}", results[0].error);
+    }
+
+    #[test]
+    fn test_http_mock_scoped_to_test() {
+        // Two tests, each with their own mock — should not leak
+        let input = r#"test "first mock" {
+  using http = http.mock({
+    "https://api.example.com/a": { status: 200, body: "first" }
+  })
+  let res: Struct = http.get("https://api.example.com/a")
+  assert res.body == "first"
+}
+
+test "second mock" {
+  using http = http.mock({
+    "https://api.example.com/b": { status: 200, body: "second" }
+  })
+  let res: Struct = http.get("https://api.example.com/b")
+  assert res.body == "second"
+}"#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.setup_test_effects();
+        let results = interp.run_tests(&program);
+        assert_eq!(results.len(), 2);
+        assert!(
+            results[0].passed,
+            "First test failed: {:?}",
+            results[0].error
+        );
+        assert!(
+            results[1].passed,
+            "Second test failed: {:?}",
+            results[1].error
+        );
+    }
 }
