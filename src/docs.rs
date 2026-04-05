@@ -13,6 +13,7 @@ pub fn get_doc(topic: &str) -> Option<&'static str> {
         "string" => Some(include_str!("docs/string.md")),
         "list" => Some(include_str!("docs/list.md")),
         "app" => Some(include_str!("docs/app.md")),
+        "http" => Some(include_str!("docs/http.md")),
         _ => None,
     }
 }
@@ -41,7 +42,7 @@ pub fn list_topics() -> Vec<(&'static str, &'static str)> {
         ("test", "Test blocks, using (mock effects), assert"),
         (
             "effects",
-            "All 6 built-in effects: db, time, rng, auth, log, env",
+            "All 7 built-in effects: db, time, rng, auth, log, env, http",
         ),
         ("match", "Match expressions, patterns, wildcard"),
         (
@@ -51,6 +52,7 @@ pub fn list_topics() -> Vec<(&'static str, &'static str)> {
         ("string", "String interpolation, methods, raw strings"),
         ("list", "list(), methods, pipeline operations on lists"),
         ("app", "App declaration, port, db config"),
+        ("http", "HTTP client: get, post, put, delete external APIs"),
     ]
 }
 
@@ -76,6 +78,7 @@ mod tests {
             "string",
             "list",
             "app",
+            "http",
         ];
         for topic in &topics {
             let content = get_doc(topic);
@@ -91,7 +94,7 @@ mod tests {
     #[test]
     fn test_list_topics_count() {
         let topics = list_topics();
-        assert_eq!(topics.len(), 13, "Expected 13 topics, got {}", topics.len());
+        assert_eq!(topics.len(), 14, "Expected 14 topics, got {}", topics.len());
     }
 
     #[test]

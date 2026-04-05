@@ -71,6 +71,15 @@ let key: String = env.get("API_KEY")
 let secret: String = env.require("SECRET")
 ```
 
+## http — HTTP client
+
+```pact
+http.get("https://api.example.com/users")
+http.post("https://api.example.com/users", { body: { name: "Alice" } })
+http.put("https://api.example.com/users/1", { body: { name: "Bob" } })
+http.delete("https://api.example.com/users/1")
+```
+
 ## Mock effects in tests
 
 ```pact
