@@ -3585,4 +3585,13 @@ test "second mock" {
             results[1].error
         );
     }
+
+    #[test]
+    #[ignore] // Requires network access — run with: cargo test test_http_real -- --ignored
+    fn test_http_real_get() {
+        let input = r#"let res: Struct = http.get("https://httpbin.org/get")
+res.status"#;
+        let result = eval_with_effects(input);
+        assert_eq!(result, Value::Int(200));
+    }
 }
