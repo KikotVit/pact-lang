@@ -2284,6 +2284,11 @@ impl Interpreter {
             env.bind(symbol_name.clone(), value.clone(), false);
             self.global.bind(symbol_name.clone(), value.clone(), false);
             Ok(())
+        } else if self.type_defs.contains_key(symbol_name) {
+            // Type definitions are stored in interpreter.type_defs, not in Environment.
+            // When the module was evaluated, TypeDecl already registered the type globally.
+            // Nothing to bind — the type is already available.
+            Ok(())
         } else {
             Err(self.error(&format!(
                 "Symbol '{}' not found in module '{}'",
@@ -3225,6 +3230,60 @@ test "add works" {
         let result = interp.interpret(&program).unwrap();
         assert_eq!(result, Value::Int(42));
         assert_eq!(interp.module_cache.len(), 1);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn eval_use_import_type() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_import_type");
+        let _ = fs::create_dir_all(dir.join("models"));
+        fs::write(
+            dir.join("models/user.pact"),
+            "type User {\n  name: String,\n  age: Int\n}\n",
+        )
+        .unwrap();
+
+        // Import the type by name — should not error
+        let input = "use models.user.User\nlet u: User = User { name: \"Alice\", age: 30 }\nu.name";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.setup_test_effects();
+        interp.base_dir = Some(dir.clone());
+        let result = interp.interpret(&program).unwrap();
+        assert_eq!(result, Value::String("Alice".to_string()));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn eval_use_wildcard_import_type() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_wildcard_type");
+        let _ = fs::create_dir_all(dir.join("models"));
+        fs::write(
+            dir.join("models/user.pact"),
+            "type User {\n  name: String\n}\n\nintent \"make user\"\nfn make_user(name: String) -> User {\n  User { name: name }\n}\n",
+        )
+        .unwrap();
+
+        // Wildcard import should include both type and function
+        let input = "use models.user.*\nlet u: User = make_user(\"Bob\")\nu.name";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.setup_test_effects();
+        interp.base_dir = Some(dir.clone());
+        let result = interp.interpret(&program).unwrap();
+        assert_eq!(result, Value::String("Bob".to_string()));
 
         let _ = fs::remove_dir_all(dir);
     }
