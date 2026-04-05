@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use super::db::DbBackend;
@@ -45,6 +45,8 @@ pub struct Interpreter {
     blocked_effects: Vec<String>,
     /// Mock responses for http effect: URL -> response struct
     pub http_mock_responses: Option<HashMap<String, Value>>,
+    /// Tracks modules currently being loaded to detect circular imports
+    loading_modules: HashSet<PathBuf>,
 }
 
 impl Interpreter {
@@ -65,6 +67,7 @@ impl Interpreter {
             rng_sequence: None,
             blocked_effects: Vec::new(),
             http_mock_responses: None,
+            loading_modules: HashSet::new(),
         }
     }
 
@@ -2213,6 +2216,16 @@ impl Interpreter {
         let module_env = if let Some(cached) = self.module_cache.get(&file_path) {
             cached.clone()
         } else {
+            // Circular dependency check
+            let canonical = file_path.canonicalize().unwrap_or(file_path.clone());
+            if self.loading_modules.contains(&canonical) {
+                return Err(self.error(&format!(
+                    "Circular import detected: {} is already being loaded",
+                    file_path.display()
+                )));
+            }
+            self.loading_modules.insert(canonical.clone());
+
             // Read, lex, parse, eval the module file
             let source = std::fs::read_to_string(&file_path).map_err(|e| {
                 let mut err =
@@ -2244,9 +2257,10 @@ impl Interpreter {
             }
             self.source = old_source;
 
-            // Cache
+            // Cache and remove from loading set
             self.module_cache
                 .insert(file_path.clone(), module_env.clone());
+            self.loading_modules.remove(&canonical);
             module_env
         };
 
@@ -3205,6 +3219,105 @@ test "add works" {
         let result = interp.interpret(&program).unwrap();
         assert_eq!(result, Value::Int(42));
         assert_eq!(interp.module_cache.len(), 1);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_circular_import_detected() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_circular");
+        let _ = fs::create_dir_all(dir.join("mods"));
+        fs::write(
+            dir.join("mods/a.pact"),
+            "use mods.b.something\nintent \"a fn\"\nfn a_fn() -> Int { 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("mods/b.pact"),
+            "use mods.a.a_fn\nintent \"b fn\"\nfn something() -> Int { 2 }\n",
+        )
+        .unwrap();
+
+        let input = "use mods.a.a_fn\na_fn()";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let err = interp.interpret(&program).unwrap_err();
+        assert!(
+            err.message.contains("Circular import"),
+            "Expected circular import error, got: {}",
+            err.message
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_deep_circular_import() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_deep_circular");
+        let _ = fs::create_dir_all(dir.join("chain"));
+        fs::write(
+            dir.join("chain/a.pact"),
+            "use chain.b.b_fn\nintent \"a\"\nfn a_fn() -> Int { 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("chain/b.pact"),
+            "use chain.c.c_fn\nintent \"b\"\nfn b_fn() -> Int { 2 }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("chain/c.pact"),
+            "use chain.a.a_fn\nintent \"c\"\nfn c_fn() -> Int { 3 }\n",
+        )
+        .unwrap();
+
+        let input = "use chain.a.a_fn\na_fn()";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let err = interp.interpret(&program).unwrap_err();
+        assert!(
+            err.message.contains("Circular import"),
+            "Expected circular import error, got: {}",
+            err.message
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_cached_module_not_circular() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_cached_not_circular");
+        let _ = fs::create_dir_all(dir.join("shared"));
+        fs::write(
+            dir.join("shared/lib.pact"),
+            "intent \"shared fn\"\nfn shared_fn() -> Int { 99 }\n",
+        )
+        .unwrap();
+
+        // Import the same module twice — should work (cache hit, not circular)
+        let input = "use shared.lib.shared_fn\nuse shared.lib.shared_fn\nshared_fn()";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let result = interp.interpret(&program).unwrap();
+        assert_eq!(result, Value::Int(99));
 
         let _ = fs::remove_dir_all(dir);
     }
