@@ -238,6 +238,7 @@ pact test users.pact
 | `auth` | `require(request)` — checks Authorization: Bearer header |
 | `log` | `info()`, `warn()`, `error()` — structured logging |
 | `env` | `get(key)`, `require(key)` — environment variables |
+| `http` | `get`, `post`, `put`, `delete` — HTTP client for external APIs |
 
 ## CLI
 
@@ -254,7 +255,7 @@ pact test users.pact
 
 PACT is v0.3. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
-What exists: lexer, parser, tree-walking interpreter, HTTP server, SQLite storage, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact test`, `pact check`, `pact docs`), 345+ tests.
+What exists: lexer, parser, tree-walking interpreter, HTTP server, SQLite storage, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact test`, `pact check`, `pact docs`), 379+ tests.
 
 What's next: HTTP client (`http` effect for calling external APIs), import/module system, authentication, LSP for editor support.
 
