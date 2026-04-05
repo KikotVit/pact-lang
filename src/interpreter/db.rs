@@ -72,26 +72,27 @@ fn value_to_sql(value: &Value) -> Box<dyn ToSql> {
 /// Convert a SQLite row back into a PACT Value::Struct using the cached schema.
 fn row_to_value(row: &rusqlite::Row, schema: &[ColDef]) -> Result<Value, rusqlite::Error> {
     let mut fields = HashMap::new();
-    for (i, col) in schema.iter().enumerate() {
+    for col in schema.iter() {
+        let name = col.name.as_str();
         let value = match col.pact_type {
             PactType::String => {
-                let v: Option<String> = row.get(i)?;
+                let v: Option<String> = row.get(name)?;
                 v.map_or(Value::Nothing, Value::String)
             }
             PactType::Int => {
-                let v: Option<i64> = row.get(i)?;
+                let v: Option<i64> = row.get(name)?;
                 v.map_or(Value::Nothing, Value::Int)
             }
             PactType::Float => {
-                let v: Option<f64> = row.get(i)?;
+                let v: Option<f64> = row.get(name)?;
                 v.map_or(Value::Nothing, Value::Float)
             }
             PactType::Bool => {
-                let v: Option<i64> = row.get(i)?;
+                let v: Option<i64> = row.get(name)?;
                 v.map_or(Value::Nothing, |n| Value::Bool(n != 0))
             }
             PactType::List | PactType::Struct => {
-                let v: Option<String> = row.get(i)?;
+                let v: Option<String> = row.get(name)?;
                 match v {
                     Some(s) => match serde_json::from_str::<serde_json::Value>(&s) {
                         Ok(json) => super::json::json_to_value(&json),
