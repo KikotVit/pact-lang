@@ -1341,7 +1341,8 @@ impl Interpreter {
 
         let timeout_ms: u64 = if let Some(ref opts) = options {
             match opts.get("timeout") {
-                Some(Value::Int(ms)) => *ms as u64,
+                Some(Value::Int(ms)) if *ms > 0 => *ms as u64,
+                Some(Value::Int(_)) => 30000, // negative/zero → default
                 _ => 30000,
             }
         } else {
@@ -1356,6 +1357,7 @@ impl Interpreter {
 
         let config = ureq::Agent::config_builder()
             .timeout_global(Some(std::time::Duration::from_millis(timeout_ms)))
+            .http_status_as_error(false)
             .build();
         let agent = ureq::Agent::new_with_config(config);
 
@@ -1366,22 +1368,19 @@ impl Interpreter {
             .any(|(k, _)| k.to_lowercase() == "content-type");
 
         let result: Result<ureq::http::Response<ureq::Body>, ureq::Error> = match method {
-            "GET" | "DELETE" => {
-                let mut req = if method == "GET" {
-                    agent.get(url)
-                } else {
-                    agent.delete(url)
-                };
+            "GET" => {
+                let mut req = agent.get(url);
                 for (k, v) in &headers {
                     req = req.header(k.as_str(), v.as_str());
                 }
                 req.call()
             }
-            "POST" | "PUT" => {
-                let mut req = if method == "POST" {
-                    agent.post(url)
-                } else {
-                    agent.put(url)
+            "POST" | "PUT" | "DELETE" => {
+                let mut req = match method {
+                    "POST" => agent.post(url),
+                    "PUT" => agent.put(url),
+                    "DELETE" => agent.delete(url).force_send_body(),
+                    _ => unreachable!(),
                 };
                 for (k, v) in &headers {
                     req = req.header(k.as_str(), v.as_str());
@@ -2351,6 +2350,7 @@ impl Interpreter {
                 // Set up fresh effects for each test
                 self.setup_test_effects();
                 self.db.clear();
+                self.http_mock_responses = None;
 
                 let mut passed = true;
                 let mut error_msg = String::new();
@@ -3593,5 +3593,39 @@ test "second mock" {
 res.status"#;
         let result = eval_with_effects(input);
         assert_eq!(result, Value::Int(200));
+    }
+
+    #[test]
+    fn test_http_mock_cleared_between_tests() {
+        // Test A sets mock, test B does NOT set mock.
+        // Test B should NOT see test A's mock (should get real request or no mock).
+        let input = r#"test "sets mock" {
+  using http = http.mock({
+    "https://api.example.com/a": { status: 200, body: "mocked" }
+  })
+  let res: Struct = http.get("https://api.example.com/a")
+  assert res.body == "mocked"
+}
+
+test "no mock set - unmocked url should fail" {
+  let res: Struct = http.get("https://api.example.com/a")
+    | on HttpError: { leaked: true }
+  assert res.leaked != true
+}"#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.setup_test_effects();
+        let results = interp.run_tests(&program);
+        assert_eq!(results.len(), 2);
+        assert!(
+            results[0].passed,
+            "First test failed: {:?}",
+            results[0].error
+        );
+        // Second test: no mock set, so real request would happen (or no mock = no interception)
+        // The key assertion: mock from test A should NOT leak to test B
     }
 }

@@ -2574,4 +2574,46 @@ route GET "/users/{id}" {
                 if name == "UserService" && *port == 8080 && db_url.as_deref() == Some("sqlite://data.db"))
         );
     }
+
+    #[test]
+    fn parse_struct_with_string_keys() {
+        let expr = parse_expr(r#"{ "https://example.com": { status: 200 } }"#);
+        if let Expr::StructLiteral { name, fields } = &expr {
+            assert!(name.is_none());
+            assert_eq!(fields.len(), 1);
+            if let StructField::Named { name, .. } = &fields[0] {
+                assert_eq!(name, "https://example.com");
+            } else {
+                panic!("Expected Named field");
+            }
+        } else {
+            panic!("Expected StructLiteral, got {:?}", expr);
+        }
+    }
+
+    #[test]
+    fn parse_struct_with_mixed_keys() {
+        let expr = parse_expr(r#"{ "url": { status: 200 }, normal_key: 42 }"#);
+        if let Expr::StructLiteral { fields, .. } = &expr {
+            assert_eq!(fields.len(), 2);
+            if let StructField::Named { name, .. } = &fields[0] {
+                assert_eq!(name, "url");
+            } else {
+                panic!("Expected Named field");
+            }
+        } else {
+            panic!("Expected StructLiteral, got {:?}", expr);
+        }
+    }
+
+    #[test]
+    fn parse_struct_with_multiple_string_keys() {
+        let expr =
+            parse_expr(r#"{ "https://a.com": { status: 200 }, "https://b.com": { status: 404 } }"#);
+        if let Expr::StructLiteral { fields, .. } = &expr {
+            assert_eq!(fields.len(), 2);
+        } else {
+            panic!("Expected StructLiteral, got {:?}", expr);
+        }
+    }
 }
