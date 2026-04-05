@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -113,6 +113,7 @@ struct Checker<'a> {
             HashMap<std::string::String, FnSig>,
         ),
     >,
+    loading_modules: HashSet<PathBuf>,
 }
 
 impl<'a> Checker<'a> {
@@ -126,6 +127,7 @@ impl<'a> Checker<'a> {
             current_fn_return: None,
             base_dir,
             module_type_cache: HashMap::new(),
+            loading_modules: HashSet::new(),
         }
     }
 
@@ -350,10 +352,29 @@ impl<'a> Checker<'a> {
             return;
         }
 
+        // Circular dependency check
+        let canonical = file_path.canonicalize().unwrap_or(file_path.clone());
+        if self.loading_modules.contains(&canonical) {
+            self.diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                line: 0,
+                column: 0,
+                message: format!(
+                    "Circular import detected: {} is already being checked",
+                    file_path.display()
+                ),
+                hint: Some(format!("File path resolved from: use {}", path.join("."))),
+                source_line: String::new(),
+            });
+            return;
+        }
+        self.loading_modules.insert(canonical.clone());
+
         // Read, lex, parse the module
         let source = match std::fs::read_to_string(&file_path) {
             Ok(s) => s,
             Err(_) => {
+                self.loading_modules.remove(&canonical);
                 self.diagnostics.push(Diagnostic {
                     severity: Severity::Warning,
                     line: 0,
@@ -372,17 +393,53 @@ impl<'a> Checker<'a> {
         let mut lexer = crate::lexer::Lexer::new(&source);
         let tokens = match lexer.tokenize() {
             Ok(t) => t,
-            Err(_) => return,
+            Err(e) => {
+                self.loading_modules.remove(&canonical);
+                self.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    line: 0,
+                    column: 0,
+                    message: format!(
+                        "Lex error in imported '{}': {}",
+                        file_path.display(),
+                        e.message
+                    ),
+                    hint: Some(format!("File path resolved from: use {}", path.join("."))),
+                    source_line: String::new(),
+                });
+                return;
+            }
         };
         let mut parser = crate::parser::Parser::new(tokens, &source);
         let program = match parser.parse() {
             Ok(p) => p,
-            Err(_) => return,
+            Err(errors) => {
+                self.loading_modules.remove(&canonical);
+                self.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    line: 0,
+                    column: 0,
+                    message: format!(
+                        "Parse error in imported '{}': {}",
+                        file_path.display(),
+                        errors[0].message
+                    ),
+                    hint: Some(format!("File path resolved from: use {}", path.join("."))),
+                    source_line: String::new(),
+                });
+                return;
+            }
         };
 
         // Collect declarations from the module (Pass 1 only)
         let mut module_checker = Checker::new(&source, self.base_dir.clone());
+        module_checker.loading_modules = self.loading_modules.clone();
         module_checker.collect_declarations(&program);
+
+        // Propagate diagnostics from sub-checker
+        self.diagnostics.extend(module_checker.diagnostics);
+
+        self.loading_modules.remove(&canonical);
 
         // Cache the module's type info
         let module_types = module_checker.type_defs;
@@ -1265,6 +1322,69 @@ mod tests {
         let diags = parse_and_check_with_base(source, &dir);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("expects Int"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_check_circular_import() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_check_circular");
+        let _ = fs::create_dir_all(dir.join("cyc"));
+        fs::write(
+            dir.join("cyc/a.pact"),
+            "use cyc.b.b_fn\nintent \"a\"\nfn a_fn() -> Int { 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("cyc/b.pact"),
+            "use cyc.a.a_fn\nintent \"b\"\nfn b_fn() -> Int { 2 }\n",
+        )
+        .unwrap();
+
+        let source = "use cyc.a.a_fn";
+        let diags = parse_and_check_with_base(source, &dir);
+        // Should get a warning about circular import, not stack overflow
+        assert!(
+            diags.iter().any(|d| d.message.contains("Circular import")),
+            "Expected circular import warning, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_check_import_lex_error() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_check_lex_err");
+        let _ = fs::create_dir_all(dir.join("bad"));
+        fs::write(dir.join("bad/mod.pact"), "@@@ not valid pact").unwrap();
+
+        let source = "use bad.mod.Foo";
+        let diags = parse_and_check_with_base(source, &dir);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("Lex error"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_check_import_parse_error() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_check_parse_err");
+        let _ = fs::create_dir_all(dir.join("bad"));
+        fs::write(dir.join("bad/mod.pact"), "fn {{{").unwrap();
+
+        let source = "use bad.mod.Foo";
+        let diags = parse_and_check_with_base(source, &dir);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("Parse error"));
 
         let _ = fs::remove_dir_all(dir);
     }

@@ -48,4 +48,4 @@ Copy fields from another struct and override specific ones:
 let updated: Struct = { ...user, active: false }
 ```
 
-> See also: fn, match, db
+> See also: fn, match, db, modules

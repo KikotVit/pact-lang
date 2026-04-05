@@ -2226,41 +2226,47 @@ impl Interpreter {
             }
             self.loading_modules.insert(canonical.clone());
 
-            // Read, lex, parse, eval the module file
-            let source = std::fs::read_to_string(&file_path).map_err(|e| {
-                let mut err =
-                    self.error(&format!("Cannot import '{}': {}", file_path.display(), e));
-                err.hint = Some(format!("File path resolved from: use {}", path.join(".")));
-                err
-            })?;
+            let result = (|| -> Result<Environment, RuntimeError> {
+                // Read, lex, parse, eval the module file
+                let source = std::fs::read_to_string(&file_path).map_err(|e| {
+                    let mut err =
+                        self.error(&format!("Cannot import '{}': {}", file_path.display(), e));
+                    err.hint = Some(format!("File path resolved from: use {}", path.join(".")));
+                    err
+                })?;
 
-            let mut lexer = crate::lexer::Lexer::new(&source);
-            let tokens = lexer.tokenize().map_err(|e| {
-                self.error(&format!("Lex error in '{}': {}", file_path.display(), e))
-            })?;
+                let mut lexer = crate::lexer::Lexer::new(&source);
+                let tokens = lexer.tokenize().map_err(|e| {
+                    self.error(&format!("Lex error in '{}': {}", file_path.display(), e))
+                })?;
 
-            let mut parser = crate::parser::Parser::new(tokens, &source);
-            let program = parser.parse().map_err(|errors| {
-                self.error(&format!(
-                    "Parse error in '{}': {}",
-                    file_path.display(),
-                    errors[0]
-                ))
-            })?;
+                let mut parser = crate::parser::Parser::new(tokens, &source);
+                let program = parser.parse().map_err(|errors| {
+                    self.error(&format!(
+                        "Parse error in '{}': {}",
+                        file_path.display(),
+                        errors[0]
+                    ))
+                })?;
 
-            // Eval the module in a fresh environment
-            let old_source = self.source.clone();
-            self.source = source;
-            let mut module_env = Environment::new();
-            for stmt in &program.statements {
-                self.eval_statement(stmt, &mut module_env)?;
-            }
-            self.source = old_source;
+                // Eval the module in a fresh environment
+                let old_source = self.source.clone();
+                self.source = source;
+                let mut module_env = Environment::new();
+                for stmt in &program.statements {
+                    self.eval_statement(stmt, &mut module_env)?;
+                }
+                self.source = old_source;
 
-            // Cache and remove from loading set
+                Ok(module_env)
+            })();
+
+            self.loading_modules.remove(&canonical);
+            let module_env = result?;
+
+            // Cache
             self.module_cache
                 .insert(file_path.clone(), module_env.clone());
-            self.loading_modules.remove(&canonical);
             module_env
         };
 
@@ -3318,6 +3324,58 @@ test "add works" {
         interp.base_dir = Some(dir.clone());
         let result = interp.interpret(&program).unwrap();
         assert_eq!(result, Value::Int(99));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_modular_example_runs() {
+        // Verify the examples/modular/ multi-file example parses and checks cleanly
+        let main_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/modular/main.pact");
+        let source = std::fs::read_to_string(&main_path).expect("examples/modular/main.pact");
+        let mut lexer = Lexer::new(&source);
+        let tokens = lexer.tokenize().expect("lex modular main");
+        let mut parser = Parser::new(tokens, &source);
+        let program = parser.parse().expect("parse modular main");
+        let base_dir = main_path.parent().unwrap();
+        let diagnostics = crate::checker::check(&program, &source, Some(base_dir));
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.severity == crate::checker::Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "Modular example should have no type errors: {:?}",
+            errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_loading_modules_cleared_on_error() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_loading_cleanup");
+        let _ = fs::create_dir_all(dir.join("broken"));
+        // Write a file that will fail to parse
+        fs::write(dir.join("broken/bad.pact"), "fn {{{").unwrap();
+        // Write a good file
+        fs::write(
+            dir.join("broken/good.pact"),
+            "intent \"get val\"\nfn get_val() -> Int { 42 }\n",
+        )
+        .unwrap();
+
+        // Import bad file (will error), then import good file (should work, not "circular")
+        let input = "use broken.good.get_val\nget_val()";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let result = interp.interpret(&program).unwrap();
+        assert_eq!(result, Value::Int(42));
 
         let _ = fs::remove_dir_all(dir);
     }
