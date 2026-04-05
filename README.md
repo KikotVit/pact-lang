@@ -70,8 +70,43 @@ PACT is built so that LLMs can read, write, and debug backend code with fewer it
 - **`needs db, time`** tells the agent what side effects a function has — no need to trace through the body to find hidden database calls
 - **`-> User or NotFound`** tells the agent every possible outcome — no undocumented exceptions to discover at runtime
 - **Error messages** include line numbers, source context, and hints — the agent fixes the issue in one attempt, not three
+- **Built-in MCP server** — the agent connects via `pact mcp`, reads documentation, checks types, runs code — all without leaving the conversation
 
 Traditional languages hide intent in comments (which drift from code), hide effects in implementation details, and hide errors in exception hierarchies. PACT makes all three part of the language.
+
+### Connect your AI agent via MCP
+
+PACT has a built-in [MCP](https://modelcontextprotocol.io/) server. Your AI coding agent gets three tools: `pact_run` (execute code), `pact_check` (validate syntax + types), `pact_docs` (read language documentation).
+
+**Claude Code** — add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "pact": {
+      "command": "pact",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+If you installed via Docker instead:
+
+```json
+{
+  "mcpServers": {
+    "pact": {
+      "command": "docker",
+      "args": ["run", "-i", "ghcr.io/kikotvit/pact-lang:latest", "mcp"]
+    }
+  }
+}
+```
+
+**Other MCP clients** — any client that supports stdio transport works. Run `pact mcp` and communicate via JSON-RPC 2.0 over stdin/stdout.
+
+The agent's workflow: connect MCP → `pact_docs("quickstart")` → get a working example → write code → `pact_check` to catch errors → `pact_run` to execute. One loop, minimal iterations.
 
 ## A fuller example
 
@@ -204,13 +239,24 @@ pact test users.pact
 | `log` | `info()`, `warn()`, `error()` — structured logging |
 | `env` | `get(key)`, `require(key)` — environment variables |
 
+## CLI
+
+| Command | What it does |
+|---------|-------------|
+| `pact run file.pact` | Run a program (starts HTTP server if app is declared) |
+| `pact test file.pact` | Run test blocks |
+| `pact check file.pact` | Validate syntax and check types |
+| `pact docs` | List all documentation topics |
+| `pact docs <topic>` | Show documentation for a topic (e.g. `pipeline`, `route`, `db`) |
+| `pact mcp` | Start MCP tool server (stdio) |
+
 ## Status
 
 PACT is v0.3. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
-What exists: lexer, parser, tree-walking interpreter, HTTP server, SQLite storage, CLI (`pact run`, `pact test`), 287 tests.
+What exists: lexer, parser, tree-walking interpreter, HTTP server, SQLite storage, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact test`, `pact check`, `pact docs`), 345+ tests.
 
-What's next: type checker, validation constraints, `pact docs` built-in reference, `pact mcp` — MCP server for AI coding agents, LSP for editor support.
+What's next: HTTP client (`http` effect for calling external APIs), import/module system, authentication, LSP for editor support.
 
 ## License
 

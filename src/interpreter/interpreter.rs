@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use super::db::DbBackend;
@@ -45,6 +45,8 @@ pub struct Interpreter {
     blocked_effects: Vec<String>,
     /// Mock responses for http effect: URL -> response struct
     pub http_mock_responses: Option<HashMap<String, Value>>,
+    /// Tracks modules currently being loaded to detect circular imports
+    loading_modules: HashSet<PathBuf>,
 }
 
 impl Interpreter {
@@ -65,6 +67,7 @@ impl Interpreter {
             rng_sequence: None,
             blocked_effects: Vec::new(),
             http_mock_responses: None,
+            loading_modules: HashSet::new(),
         }
     }
 
@@ -2213,36 +2216,53 @@ impl Interpreter {
         let module_env = if let Some(cached) = self.module_cache.get(&file_path) {
             cached.clone()
         } else {
-            // Read, lex, parse, eval the module file
-            let source = std::fs::read_to_string(&file_path).map_err(|e| {
-                let mut err =
-                    self.error(&format!("Cannot import '{}': {}", file_path.display(), e));
-                err.hint = Some(format!("File path resolved from: use {}", path.join(".")));
-                err
-            })?;
-
-            let mut lexer = crate::lexer::Lexer::new(&source);
-            let tokens = lexer.tokenize().map_err(|e| {
-                self.error(&format!("Lex error in '{}': {}", file_path.display(), e))
-            })?;
-
-            let mut parser = crate::parser::Parser::new(tokens, &source);
-            let program = parser.parse().map_err(|errors| {
-                self.error(&format!(
-                    "Parse error in '{}': {}",
-                    file_path.display(),
-                    errors[0]
-                ))
-            })?;
-
-            // Eval the module in a fresh environment
-            let old_source = self.source.clone();
-            self.source = source;
-            let mut module_env = Environment::new();
-            for stmt in &program.statements {
-                self.eval_statement(stmt, &mut module_env)?;
+            // Circular dependency check
+            let canonical = file_path.canonicalize().unwrap_or(file_path.clone());
+            if self.loading_modules.contains(&canonical) {
+                return Err(self.error(&format!(
+                    "Circular import detected: {} is already being loaded",
+                    file_path.display()
+                )));
             }
-            self.source = old_source;
+            self.loading_modules.insert(canonical.clone());
+
+            let result = (|| -> Result<Environment, RuntimeError> {
+                // Read, lex, parse, eval the module file
+                let source = std::fs::read_to_string(&file_path).map_err(|e| {
+                    let mut err =
+                        self.error(&format!("Cannot import '{}': {}", file_path.display(), e));
+                    err.hint = Some(format!("File path resolved from: use {}", path.join(".")));
+                    err
+                })?;
+
+                let mut lexer = crate::lexer::Lexer::new(&source);
+                let tokens = lexer.tokenize().map_err(|e| {
+                    self.error(&format!("Lex error in '{}': {}", file_path.display(), e))
+                })?;
+
+                let mut parser = crate::parser::Parser::new(tokens, &source);
+                let program = parser.parse().map_err(|errors| {
+                    self.error(&format!(
+                        "Parse error in '{}': {}",
+                        file_path.display(),
+                        errors[0]
+                    ))
+                })?;
+
+                // Eval the module in a fresh environment
+                let old_source = self.source.clone();
+                self.source = source;
+                let mut module_env = Environment::new();
+                for stmt in &program.statements {
+                    self.eval_statement(stmt, &mut module_env)?;
+                }
+                self.source = old_source;
+
+                Ok(module_env)
+            })();
+
+            self.loading_modules.remove(&canonical);
+            let module_env = result?;
 
             // Cache
             self.module_cache
@@ -3205,6 +3225,157 @@ test "add works" {
         let result = interp.interpret(&program).unwrap();
         assert_eq!(result, Value::Int(42));
         assert_eq!(interp.module_cache.len(), 1);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_circular_import_detected() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_circular");
+        let _ = fs::create_dir_all(dir.join("mods"));
+        fs::write(
+            dir.join("mods/a.pact"),
+            "use mods.b.something\nintent \"a fn\"\nfn a_fn() -> Int { 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("mods/b.pact"),
+            "use mods.a.a_fn\nintent \"b fn\"\nfn something() -> Int { 2 }\n",
+        )
+        .unwrap();
+
+        let input = "use mods.a.a_fn\na_fn()";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let err = interp.interpret(&program).unwrap_err();
+        assert!(
+            err.message.contains("Circular import"),
+            "Expected circular import error, got: {}",
+            err.message
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_deep_circular_import() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_deep_circular");
+        let _ = fs::create_dir_all(dir.join("chain"));
+        fs::write(
+            dir.join("chain/a.pact"),
+            "use chain.b.b_fn\nintent \"a\"\nfn a_fn() -> Int { 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("chain/b.pact"),
+            "use chain.c.c_fn\nintent \"b\"\nfn b_fn() -> Int { 2 }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("chain/c.pact"),
+            "use chain.a.a_fn\nintent \"c\"\nfn c_fn() -> Int { 3 }\n",
+        )
+        .unwrap();
+
+        let input = "use chain.a.a_fn\na_fn()";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let err = interp.interpret(&program).unwrap_err();
+        assert!(
+            err.message.contains("Circular import"),
+            "Expected circular import error, got: {}",
+            err.message
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_cached_module_not_circular() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_cached_not_circular");
+        let _ = fs::create_dir_all(dir.join("shared"));
+        fs::write(
+            dir.join("shared/lib.pact"),
+            "intent \"shared fn\"\nfn shared_fn() -> Int { 99 }\n",
+        )
+        .unwrap();
+
+        // Import the same module twice — should work (cache hit, not circular)
+        let input = "use shared.lib.shared_fn\nuse shared.lib.shared_fn\nshared_fn()";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let result = interp.interpret(&program).unwrap();
+        assert_eq!(result, Value::Int(99));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_modular_example_runs() {
+        // Verify the examples/modular/ multi-file example parses and checks cleanly
+        let main_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/modular/main.pact");
+        let source = std::fs::read_to_string(&main_path).expect("examples/modular/main.pact");
+        let mut lexer = Lexer::new(&source);
+        let tokens = lexer.tokenize().expect("lex modular main");
+        let mut parser = Parser::new(tokens, &source);
+        let program = parser.parse().expect("parse modular main");
+        let base_dir = main_path.parent().unwrap();
+        let diagnostics = crate::checker::check(&program, &source, Some(base_dir));
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.severity == crate::checker::Severity::Error)
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "Modular example should have no type errors: {:?}",
+            errors.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_loading_modules_cleared_on_error() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_test_loading_cleanup");
+        let _ = fs::create_dir_all(dir.join("broken"));
+        // Write a file that will fail to parse
+        fs::write(dir.join("broken/bad.pact"), "fn {{{").unwrap();
+        // Write a good file
+        fs::write(
+            dir.join("broken/good.pact"),
+            "intent \"get val\"\nfn get_val() -> Int { 42 }\n",
+        )
+        .unwrap();
+
+        // Import bad file (will error), then import good file (should work, not "circular")
+        let input = "use broken.good.get_val\nget_val()";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.base_dir = Some(dir.clone());
+        let result = interp.interpret(&program).unwrap();
+        assert_eq!(result, Value::Int(42));
 
         let _ = fs::remove_dir_all(dir);
     }

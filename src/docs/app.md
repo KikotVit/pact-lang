@@ -27,4 +27,4 @@ app API { port: 3000 }
 
 On startup, PACT binds all declared routes to the specified port. If a `db` URL is provided, it connects to SQLite with WAL mode enabled. Without a `db` URL, an in-memory database is used.
 
-> See also: route, db, effects
+> See also: route, db, effects, modules

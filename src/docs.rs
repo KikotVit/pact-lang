@@ -14,6 +14,7 @@ pub fn get_doc(topic: &str) -> Option<&'static str> {
         "list" => Some(include_str!("docs/list.md")),
         "app" => Some(include_str!("docs/app.md")),
         "http" => Some(include_str!("docs/http.md")),
+        "modules" => Some(include_str!("docs/modules.md")),
         _ => None,
     }
 }
@@ -53,6 +54,10 @@ pub fn list_topics() -> Vec<(&'static str, &'static str)> {
         ("list", "list(), methods, pipeline operations on lists"),
         ("app", "App declaration, port, db config"),
         ("http", "HTTP client: get, post, put, delete external APIs"),
+        (
+            "modules",
+            "Import functions and types from other .pact files",
+        ),
     ]
 }
 
@@ -79,6 +84,7 @@ mod tests {
             "list",
             "app",
             "http",
+            "modules",
         ];
         for topic in &topics {
             let content = get_doc(topic);
@@ -94,7 +100,7 @@ mod tests {
     #[test]
     fn test_list_topics_count() {
         let topics = list_topics();
-        assert_eq!(topics.len(), 14, "Expected 14 topics, got {}", topics.len());
+        assert_eq!(topics.len(), 15, "Expected 15 topics, got {}", topics.len());
     }
 
     #[test]

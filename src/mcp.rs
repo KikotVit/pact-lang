@@ -108,7 +108,11 @@ fn execute_pact_check(params: &serde_json::Value) -> serde_json::Value {
     match parser.parse() {
         Ok(program) => {
             let stmt_count = program.statements.len();
-            let diagnostics = crate::checker::check(&program, &source);
+            let base_dir = params
+                .get("file")
+                .and_then(|v| v.as_str())
+                .and_then(|f| std::path::Path::new(f).parent());
+            let diagnostics = crate::checker::check(&program, &source, base_dir);
             let errors: Vec<serde_json::Value> = diagnostics
                 .iter()
                 .filter(|d| d.severity == crate::checker::Severity::Error)

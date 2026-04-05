@@ -139,7 +139,8 @@ fn main() {
             }
         };
 
-        let diagnostics = pact::checker::check(&program, &source);
+        let base_dir = std::path::Path::new(filename).parent();
+        let diagnostics = pact::checker::check(&program, &source, base_dir);
         let errors: Vec<_> = diagnostics
             .iter()
             .filter(|d| d.severity == pact::checker::Severity::Error)
