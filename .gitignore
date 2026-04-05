@@ -3,3 +3,4 @@
 *.sha256
 .DS_Store
 .claude/worktrees/
+docs/superpowers/
