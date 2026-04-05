@@ -120,6 +120,27 @@ fn db_error(context: &str, e: rusqlite::Error) -> RuntimeError {
     }
 }
 
+fn db_value_error(context: &str, e: rusqlite::Error) -> Value {
+    let kind = match &e {
+        rusqlite::Error::SqliteFailure(err, _)
+            if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            "constraint"
+        }
+        _ => "internal",
+    };
+    let mut fields = HashMap::new();
+    fields.insert(
+        "message".to_string(),
+        Value::String(format!("Database error in {}: {}", context, e)),
+    );
+    fields.insert("kind".to_string(), Value::String(kind.to_string()));
+    Value::Error {
+        variant: "DbError".to_string(),
+        fields: Some(fields),
+    }
+}
+
 // ── DbBackend ───────────────────────────────────────────────────────
 
 /// Unified database backend — Memory (HashMap) or Sqlite.
@@ -264,9 +285,10 @@ impl DbBackend {
                     .map(|col| value_to_sql(fields.get(&col.name).unwrap_or(&Value::Nothing)))
                     .collect();
                 let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
-                conn.execute(&sql, param_refs.as_slice())
-                    .map_err(|e| db_error(&format!("insert on table '{}'", table), e))?;
-                Ok(value)
+                match conn.execute(&sql, param_refs.as_slice()) {
+                    Ok(_) => Ok(value),
+                    Err(e) => Ok(db_value_error(&format!("insert on table '{}'", table), e)),
+                }
             }
         }
     }
@@ -313,17 +335,24 @@ impl DbBackend {
                     (format!("SELECT * FROM \"{}\"", table), vec![])
                 };
                 let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
-                let mut stmt = conn
-                    .prepare(&sql)
-                    .map_err(|e| db_error(&format!("query on table '{}'", table), e))?;
-                let rows = stmt
+                let mut stmt = match conn.prepare(&sql) {
+                    Ok(s) => s,
+                    Err(e) => return Ok(db_value_error(&format!("query on table '{}'", table), e)),
+                };
+                let rows = match stmt
                     .query_map(param_refs.as_slice(), |row| row_to_value(row, schema))
-                    .map_err(|e| db_error(&format!("query on table '{}'", table), e))?;
+                {
+                    Ok(r) => r,
+                    Err(e) => return Ok(db_value_error(&format!("query on table '{}'", table), e)),
+                };
                 let mut results = Vec::new();
                 for row in rows {
-                    results.push(
-                        row.map_err(|e| db_error(&format!("reading row from '{}'", table), e))?,
-                    );
+                    match row {
+                        Ok(v) => results.push(v),
+                        Err(e) => {
+                            return Ok(db_value_error(&format!("reading row from '{}'", table), e));
+                        }
+                    }
                 }
                 Ok(Value::List(results))
             }
@@ -381,16 +410,21 @@ impl DbBackend {
                     (format!("SELECT * FROM \"{}\" LIMIT 1", table), vec![])
                 };
                 let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
-                let mut stmt = conn
-                    .prepare(&sql)
-                    .map_err(|e| db_error(&format!("find on table '{}'", table), e))?;
-                let mut rows = stmt
+                let mut stmt = match conn.prepare(&sql) {
+                    Ok(s) => s,
+                    Err(e) => return Ok(db_value_error(&format!("find on table '{}'", table), e)),
+                };
+                let mut rows = match stmt
                     .query_map(param_refs.as_slice(), |row| row_to_value(row, schema))
-                    .map_err(|e| db_error(&format!("find on table '{}'", table), e))?;
+                {
+                    Ok(r) => r,
+                    Err(e) => return Ok(db_value_error(&format!("find on table '{}'", table), e)),
+                };
                 match rows.next() {
-                    Some(row) => {
-                        row.map_err(|e| db_error(&format!("reading row from '{}'", table), e))
-                    }
+                    Some(row) => match row {
+                        Ok(v) => Ok(v),
+                        Err(e) => Ok(db_value_error(&format!("reading row from '{}'", table), e)),
+                    },
                     None => Ok(Value::Error {
                         variant: "NotFound".to_string(),
                         fields: None,
@@ -464,9 +498,12 @@ impl DbBackend {
                     set_parts.join(", ")
                 );
                 let param_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
-                let rows_affected = conn
-                    .execute(&sql, param_refs.as_slice())
-                    .map_err(|e| db_error(&format!("update on table '{}'", table), e))?;
+                let rows_affected = match conn.execute(&sql, param_refs.as_slice()) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        return Ok(db_value_error(&format!("update on table '{}'", table), e));
+                    }
+                };
                 if rows_affected == 0 {
                     Ok(Value::Error {
                         variant: "NotFound".to_string(),
@@ -517,16 +554,32 @@ impl DbBackend {
                 // SELECT the row first so we can return it
                 let select_sql = format!("SELECT * FROM \"{}\" WHERE \"id\" = ? LIMIT 1", table);
                 let id_param = value_to_sql(&Value::String(id.to_string()));
-                let mut stmt = conn
-                    .prepare(&select_sql)
-                    .map_err(|e| db_error(&format!("delete select on table '{}'", table), e))?;
-                let mut rows = stmt
-                    .query_map([id_param.as_ref()], |row| row_to_value(row, schema))
-                    .map_err(|e| db_error(&format!("delete select on table '{}'", table), e))?;
-                let found = match rows.next() {
-                    Some(row) => {
-                        row.map_err(|e| db_error(&format!("reading row from '{}'", table), e))?
+                let mut stmt = match conn.prepare(&select_sql) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return Ok(db_value_error(
+                            &format!("delete select on table '{}'", table),
+                            e,
+                        ));
                     }
+                };
+                let mut rows =
+                    match stmt.query_map([id_param.as_ref()], |row| row_to_value(row, schema)) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(db_value_error(
+                                &format!("delete select on table '{}'", table),
+                                e,
+                            ));
+                        }
+                    };
+                let found = match rows.next() {
+                    Some(row) => match row {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Ok(db_value_error(&format!("reading row from '{}'", table), e));
+                        }
+                    },
                     None => {
                         return Ok(Value::Error {
                             variant: "NotFound".to_string(),
@@ -540,8 +593,12 @@ impl DbBackend {
                 // DELETE the row
                 let delete_sql = format!("DELETE FROM \"{}\" WHERE \"id\" = ?", table);
                 let id_param2 = value_to_sql(&Value::String(id.to_string()));
-                conn.execute(&delete_sql, [id_param2.as_ref()])
-                    .map_err(|e| db_error(&format!("delete on table '{}'", table), e))?;
+                match conn.execute(&delete_sql, [id_param2.as_ref()]) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        return Ok(db_value_error(&format!("delete on table '{}'", table), e));
+                    }
+                };
                 Ok(found)
             }
         }
