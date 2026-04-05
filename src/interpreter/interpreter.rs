@@ -1205,7 +1205,255 @@ impl Interpreter {
                 },
                 _ => Err(self.error("env.require expects a String argument")),
             },
+            "http.mock" => self.builtin_http_mock(args),
+            "http.get" => self.builtin_http_request("GET", args),
+            "http.post" => self.builtin_http_request("POST", args),
+            "http.put" => self.builtin_http_request("PUT", args),
+            "http.delete" => self.builtin_http_request("DELETE", args),
             _ => Err(self.error(&format!("Unknown builtin '{}'", name))),
+        }
+    }
+
+    fn builtin_http_mock(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let arg = args.into_iter().next().unwrap_or(Value::Nothing);
+        match arg {
+            Value::Struct { fields, .. } => {
+                let mut mock_map = HashMap::new();
+                for (url, response) in fields {
+                    mock_map.insert(url, response);
+                }
+                self.http_mock_responses = Some(mock_map);
+                Ok(self.make_http_effect())
+            }
+            Value::Nothing => {
+                // http.mock() with no args or empty — mock with no URLs
+                self.http_mock_responses = Some(HashMap::new());
+                Ok(self.make_http_effect())
+            }
+            _ => Err(self.error("http.mock expects a Struct mapping URLs to response structs")),
+        }
+    }
+
+    fn builtin_http_request(
+        &mut self,
+        method: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        // Extract URL
+        let url = match args.first() {
+            Some(Value::String(s)) => s.clone(),
+            _ => {
+                return Err(self.error(&format!(
+                    "http.{} expects a String URL as first argument",
+                    method.to_lowercase()
+                )));
+            }
+        };
+
+        // Extract options struct (headers, body, timeout)
+        let options = match args.get(1) {
+            Some(Value::Struct { fields, .. }) => Some(fields.clone()),
+            Some(_) => {
+                return Err(self.error(&format!(
+                    "http.{} second argument must be an options Struct",
+                    method.to_lowercase()
+                )));
+            }
+            None => None,
+        };
+
+        // Check mock first
+        if let Some(ref mock_map) = self.http_mock_responses {
+            if let Some(response) = mock_map.get(&url) {
+                // Ensure response is a proper struct with at least status
+                match response {
+                    Value::Struct { fields, .. } => {
+                        let mut result = fields.clone();
+                        if !result.contains_key("status") {
+                            result.insert("status".to_string(), Value::Int(200));
+                        }
+                        if !result.contains_key("headers") {
+                            result.insert(
+                                "headers".to_string(),
+                                Value::Struct {
+                                    type_name: String::new(),
+                                    fields: HashMap::new(),
+                                },
+                            );
+                        }
+                        if !result.contains_key("body") {
+                            result.insert("body".to_string(), Value::Nothing);
+                        }
+                        return Ok(Value::Struct {
+                            type_name: String::new(),
+                            fields: result,
+                        });
+                    }
+                    _ => return Ok(response.clone()),
+                }
+            } else {
+                // URL not in mock map -> HttpError
+                let mut fields = HashMap::new();
+                fields.insert(
+                    "message".to_string(),
+                    Value::String(format!("No mock configured for URL: {}", url)),
+                );
+                return Ok(Value::Error {
+                    variant: "HttpError".to_string(),
+                    fields: Some(fields),
+                });
+            }
+        }
+
+        // Real HTTP request via ureq
+        self.http_real_request(method, &url, options)
+    }
+
+    fn http_real_request(
+        &self,
+        method: &str,
+        url: &str,
+        options: Option<HashMap<String, Value>>,
+    ) -> Result<Value, RuntimeError> {
+        use crate::interpreter::json::value_to_json;
+
+        // Extract headers from options
+        let headers: Vec<(String, String)> = if let Some(ref opts) = options {
+            if let Some(Value::Struct { fields, .. }) = opts.get("headers") {
+                fields
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            match v {
+                                Value::String(s) => s.clone(),
+                                other => format!("{}", other),
+                            },
+                        )
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        let timeout_ms: u64 = if let Some(ref opts) = options {
+            match opts.get("timeout") {
+                Some(Value::Int(ms)) => *ms as u64,
+                _ => 30000,
+            }
+        } else {
+            30000
+        };
+
+        let body_json: Option<serde_json::Value> = if let Some(ref opts) = options {
+            opts.get("body").map(|v| value_to_json(v))
+        } else {
+            None
+        };
+
+        let config = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_millis(timeout_ms)))
+            .build();
+        let agent = ureq::Agent::new_with_config(config);
+
+        // ureq v3 uses typed builders: WithBody vs WithoutBody
+        // We handle each method separately to satisfy the type system
+        let has_custom_content_type = headers
+            .iter()
+            .any(|(k, _)| k.to_lowercase() == "content-type");
+
+        let result: Result<ureq::http::Response<ureq::Body>, ureq::Error> = match method {
+            "GET" | "DELETE" => {
+                let mut req = if method == "GET" {
+                    agent.get(url)
+                } else {
+                    agent.delete(url)
+                };
+                for (k, v) in &headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+                req.call()
+            }
+            "POST" | "PUT" => {
+                let mut req = if method == "POST" {
+                    agent.post(url)
+                } else {
+                    agent.put(url)
+                };
+                for (k, v) in &headers {
+                    req = req.header(k.as_str(), v.as_str());
+                }
+                if !has_custom_content_type {
+                    req = req.content_type("application/json");
+                }
+                if let Some(ref json_body) = body_json {
+                    let body_str = json_body.to_string();
+                    req.send(body_str.as_bytes())
+                } else {
+                    req.send_empty()
+                }
+            }
+            _ => return Err(self.error(&format!("Unsupported HTTP method: {}", method))),
+        };
+
+        self.http_build_response(result)
+    }
+
+    fn http_build_response(
+        &self,
+        result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+    ) -> Result<Value, RuntimeError> {
+        use crate::interpreter::json::json_to_value;
+
+        match result {
+            Ok(response) => {
+                let status = response.status().as_u16() as i64;
+
+                // Collect response headers (normalized: lowercase, - -> _)
+                let mut header_fields = HashMap::new();
+                for (name, value) in response.headers().iter() {
+                    let normalized_key = name.as_str().to_lowercase().replace('-', "_");
+                    if let Ok(s) = value.to_str() {
+                        header_fields.insert(normalized_key, Value::String(s.to_string()));
+                    }
+                }
+
+                // Read body
+                let body_str = response.into_body().read_to_string().unwrap_or_default();
+
+                // Try parse as JSON, fallback to string
+                let body = match serde_json::from_str::<serde_json::Value>(&body_str) {
+                    Ok(json) => json_to_value(&json),
+                    Err(_) => Value::String(body_str),
+                };
+
+                let mut fields = HashMap::new();
+                fields.insert("status".to_string(), Value::Int(status));
+                fields.insert("body".to_string(), body);
+                fields.insert(
+                    "headers".to_string(),
+                    Value::Struct {
+                        type_name: String::new(),
+                        fields: header_fields,
+                    },
+                );
+
+                Ok(Value::Struct {
+                    type_name: String::new(),
+                    fields,
+                })
+            }
+            Err(e) => {
+                let mut fields = HashMap::new();
+                fields.insert("message".to_string(), Value::String(format!("{}", e)));
+                Ok(Value::Error {
+                    variant: "HttpError".to_string(),
+                    fields: Some(fields),
+                })
+            }
         }
     }
 
@@ -2033,7 +2281,7 @@ impl Interpreter {
         route: &StoredRoute,
         request: Value,
     ) -> Result<Value, RuntimeError> {
-        let known_effects: Vec<String> = ["db", "auth", "log", "time", "rng", "env"]
+        let known_effects: Vec<String> = ["db", "auth", "log", "time", "rng", "env", "http"]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -3057,5 +3305,196 @@ wrap(42)
         } else {
             panic!("Expected Response, got {:?}", result);
         }
+    }
+
+    // --- HTTP effect tests ---
+
+    #[test]
+    fn test_http_mock_setup() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/users": { status: 200, body: "ok" }
+})
+http"#;
+        let result = eval_with_effects(input);
+        match result {
+            Value::Effect { name, .. } => assert_eq!(name, "http"),
+            other => panic!("Expected Effect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_http_needs_declaration() {
+        // In a route without `needs http`, accessing http should be blocked
+        let input = r#"app TestApp { port: 3000 }
+intent "test"
+route GET "/test" {
+  http.get("https://example.com")
+}"#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.setup_test_effects();
+        // The route is registered but when called, http should be blocked
+        interp.interpret(&program).unwrap();
+        // Simulate calling the route
+        let route = interp.routes[0].clone();
+        let req = Value::Struct {
+            type_name: String::new(),
+            fields: HashMap::new(),
+        };
+        let result = interp.execute_route(&route, req);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("not available"),
+            "Expected 'not available' error, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_http_get_mocked() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/users": { status: 200, body: list({ name: "Alice", active: true }, { name: "Bob", active: false }) }
+})
+let res: Struct = http.get("https://api.example.com/users")
+res"#;
+        let result = eval_with_effects(input);
+        if let Value::Struct { fields, .. } = &result {
+            assert_eq!(fields.get("status"), Some(&Value::Int(200)));
+            assert!(fields.contains_key("body"));
+            assert!(fields.contains_key("headers"));
+        } else {
+            panic!("Expected Struct, got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_http_get_status_field() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/data": { status: 404, body: "not found" }
+})
+let res: Struct = http.get("https://api.example.com/data")
+res.status"#;
+        assert_eq!(eval_with_effects(input), Value::Int(404));
+    }
+
+    #[test]
+    fn test_http_get_body_field() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/data": { status: 200, body: "hello" }
+})
+let res: Struct = http.get("https://api.example.com/data")
+res.body"#;
+        assert_eq!(eval_with_effects(input), Value::String("hello".to_string()));
+    }
+
+    #[test]
+    fn test_http_get_unmocked_url() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/known": { status: 200, body: "ok" }
+})
+http.get("https://api.example.com/unknown")"#;
+        let result = eval_with_effects(input);
+        match result {
+            Value::Error { variant, .. } => assert_eq!(variant, "HttpError"),
+            other => panic!("Expected HttpError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_http_get_body_pipeline() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/users": { status: 200, body: list({ name: "Alice", active: true }, { name: "Bob", active: false }) }
+})
+http.get("https://api.example.com/users")
+  | .body
+  | filter where .active
+  | map to .name"#;
+        let result = eval_with_effects(input);
+        assert_eq!(
+            result,
+            Value::List(vec![Value::String("Alice".to_string())])
+        );
+    }
+
+    #[test]
+    fn test_http_on_error() {
+        let input = r#"using http = http.mock({})
+http.get("https://unknown.url")
+  | on HttpError: "caught error""#;
+        let result = eval_with_effects(input);
+        assert_eq!(result, Value::String("caught error".to_string()));
+    }
+
+    #[test]
+    fn test_http_post_with_body() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/users": { status: 201, body: { id: 1, name: "Alice" } }
+})
+let res: Struct = http.post("https://api.example.com/users", {
+  body: { name: "Alice" }
+})
+res.status"#;
+        assert_eq!(eval_with_effects(input), Value::Int(201));
+    }
+
+    #[test]
+    fn test_http_put_with_body() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/users/1": { status: 200, body: { id: 1, name: "Updated" } }
+})
+let res: Struct = http.put("https://api.example.com/users/1", {
+  body: { name: "Updated" }
+})
+res.body.name"#;
+        assert_eq!(
+            eval_with_effects(input),
+            Value::String("Updated".to_string())
+        );
+    }
+
+    #[test]
+    fn test_http_delete() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/users/1": { status: 204, body: nothing }
+})
+let res: Struct = http.delete("https://api.example.com/users/1")
+res.status"#;
+        assert_eq!(eval_with_effects(input), Value::Int(204));
+    }
+
+    #[test]
+    fn test_http_mock_multiple_urls() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/users": { status: 200, body: "users" },
+  "https://api.example.com/roles": { status: 200, body: "roles" }
+})
+let u: Struct = http.get("https://api.example.com/users")
+let r: Struct = http.get("https://api.example.com/roles")
+list(u.body, r.body)"#;
+        assert_eq!(
+            eval_with_effects(input),
+            Value::List(vec![
+                Value::String("users".to_string()),
+                Value::String("roles".to_string()),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_http_response_has_all_fields() {
+        let input = r#"using http = http.mock({
+  "https://api.example.com/test": { status: 200, body: "ok" }
+})
+let res: Struct = http.get("https://api.example.com/test")
+list(res.status, res.body)"#;
+        let result = eval_with_effects(input);
+        assert_eq!(
+            result,
+            Value::List(vec![Value::Int(200), Value::String("ok".to_string())])
+        );
     }
 }

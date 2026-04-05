@@ -72,6 +72,13 @@ impl Parser {
         self.at(&TokenKind::Eof)
     }
 
+    fn at_string(&self) -> bool {
+        matches!(
+            self.current_kind(),
+            TokenKind::RawStringLiteral(_) | TokenKind::StringStart
+        )
+    }
+
     fn eat(&mut self, kind: &TokenKind) -> bool {
         if self.at(kind) {
             self.advance();
@@ -1094,6 +1101,28 @@ impl Parser {
                 return true;
             }
         }
+        // Check for string key followed by colon (e.g. { "url": value })
+        match self.peek_at(offset) {
+            TokenKind::RawStringLiteral(_) => {
+                if *self.peek_at(offset + 1) == TokenKind::Colon {
+                    return true;
+                }
+            }
+            TokenKind::StringStart => {
+                // Skip past StringStart, StringFragment(s), StringEnd to find colon
+                let mut off = offset + 1;
+                while !matches!(self.peek_at(off), TokenKind::StringEnd | TokenKind::Eof) {
+                    off += 1;
+                }
+                // off is at StringEnd, check off+1 for colon
+                if *self.peek_at(off) == TokenKind::StringEnd
+                    && *self.peek_at(off + 1) == TokenKind::Colon
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
         false
     }
 
@@ -1106,6 +1135,19 @@ impl Parser {
                 self.advance(); // consume ...
                 let expr = self.parse_expression()?;
                 fields.push(StructField::Spread(expr));
+            } else if self.at_string() {
+                // String key in struct literal: "key": value
+                let key_expr = self.parse_string_expr()?;
+                let field_name = match key_expr {
+                    Expr::StringLiteral(StringExpr::Simple(s)) => s,
+                    _ => return self.fail("Expected simple string key in struct literal", None),
+                };
+                self.expect(&TokenKind::Colon)?;
+                let value = self.parse_expression()?;
+                fields.push(StructField::Named {
+                    name: field_name,
+                    value,
+                });
             } else {
                 let field_name = self.expect_identifier()?;
                 self.expect(&TokenKind::Colon)?;
