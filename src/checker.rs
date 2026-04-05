@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use crate::lexer::token::Span;
 use crate::parser::ast::*;
@@ -80,7 +81,7 @@ impl fmt::Display for ResolvedType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)] // fields used in collect_declarations, will be read in v2 for field access checking
 enum TypeDef {
     Struct {
@@ -104,10 +105,18 @@ struct Checker<'a> {
     type_defs: HashMap<std::string::String, TypeDef>,
     diagnostics: Vec<Diagnostic>,
     current_fn_return: Option<ResolvedType>,
+    base_dir: Option<PathBuf>,
+    module_type_cache: HashMap<
+        PathBuf,
+        (
+            HashMap<std::string::String, TypeDef>,
+            HashMap<std::string::String, FnSig>,
+        ),
+    >,
 }
 
 impl<'a> Checker<'a> {
-    fn new(source: &'a str) -> Self {
+    fn new(source: &'a str, base_dir: Option<PathBuf>) -> Self {
         Checker {
             source,
             scopes: vec![HashMap::new()],
@@ -115,6 +124,8 @@ impl<'a> Checker<'a> {
             type_defs: HashMap::new(),
             diagnostics: Vec::new(),
             current_fn_return: None,
+            base_dir,
+            module_type_cache: HashMap::new(),
         }
     }
 
@@ -224,8 +235,8 @@ impl<'a> Checker<'a> {
 
 /// Analyze a parsed program for type errors. Returns all diagnostics found.
 /// Empty vec = no issues.
-pub fn check(program: &Program, source: &str) -> Vec<Diagnostic> {
-    let mut checker = Checker::new(source);
+pub fn check(program: &Program, source: &str, base_dir: Option<&Path>) -> Vec<Diagnostic> {
+    let mut checker = Checker::new(source, base_dir.map(|p| p.to_path_buf()));
     checker.collect_declarations(program);
     checker.check_statements(&program.statements);
     checker.diagnostics
@@ -288,7 +299,111 @@ impl<'a> Checker<'a> {
                         },
                     );
                 }
+                Statement::Use { path } => {
+                    self.resolve_use(path);
+                }
                 _ => {}
+            }
+        }
+    }
+
+    fn resolve_use(&mut self, path: &[String]) {
+        if path.is_empty() {
+            return;
+        }
+
+        let symbol_name = &path[path.len() - 1];
+        let file_parts = &path[..path.len() - 1];
+
+        if file_parts.is_empty() {
+            return;
+        }
+
+        let base = match &self.base_dir {
+            Some(d) => d.clone(),
+            None => return, // no base_dir means we can't resolve files
+        };
+
+        let mut file_path = base;
+        for part in file_parts {
+            file_path.push(part);
+        }
+        file_path.set_extension("pact");
+
+        // Check cache
+        if let Some((cached_types, cached_fns)) = self.module_type_cache.get(&file_path) {
+            if symbol_name == "*" {
+                for (name, td) in cached_types {
+                    self.type_defs.insert(name.clone(), td.clone());
+                }
+                for (name, sig) in cached_fns {
+                    self.fn_sigs.insert(name.clone(), sig.clone());
+                }
+            } else {
+                if let Some(td) = cached_types.get(symbol_name) {
+                    self.type_defs.insert(symbol_name.clone(), td.clone());
+                }
+                if let Some(sig) = cached_fns.get(symbol_name) {
+                    self.fn_sigs.insert(symbol_name.clone(), sig.clone());
+                }
+            }
+            return;
+        }
+
+        // Read, lex, parse the module
+        let source = match std::fs::read_to_string(&file_path) {
+            Ok(s) => s,
+            Err(_) => {
+                self.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    line: 0,
+                    column: 0,
+                    message: format!(
+                        "Cannot resolve import '{}': file not found",
+                        file_path.display()
+                    ),
+                    hint: Some(format!("File path resolved from: use {}", path.join("."))),
+                    source_line: String::new(),
+                });
+                return;
+            }
+        };
+
+        let mut lexer = crate::lexer::Lexer::new(&source);
+        let tokens = match lexer.tokenize() {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        let mut parser = crate::parser::Parser::new(tokens, &source);
+        let program = match parser.parse() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+
+        // Collect declarations from the module (Pass 1 only)
+        let mut module_checker = Checker::new(&source, self.base_dir.clone());
+        module_checker.collect_declarations(&program);
+
+        // Cache the module's type info
+        let module_types = module_checker.type_defs;
+        let module_fns = module_checker.fn_sigs;
+        self.module_type_cache
+            .insert(file_path, (module_types.clone(), module_fns.clone()));
+
+        // Import requested symbols
+        if symbol_name == "*" {
+            for (name, td) in &module_types {
+                self.type_defs.insert(name.clone(), td.clone());
+            }
+            for (name, sig) in &module_fns {
+                self.fn_sigs.insert(name.clone(), sig.clone());
+            }
+        } else {
+            if let Some(td) = module_types.get(symbol_name) {
+                self.type_defs.insert(symbol_name.clone(), td.clone());
+            }
+            if let Some(sig) = module_fns.get(symbol_name) {
+                self.fn_sigs.insert(symbol_name.clone(), sig.clone());
             }
         }
     }
@@ -632,12 +747,12 @@ mod tests {
         let tokens = lexer.tokenize().expect("lex failed");
         let mut parser = crate::parser::Parser::new(tokens, source);
         let program = parser.parse().expect("parse failed");
-        check(&program, source)
+        check(&program, source, None)
     }
 
     #[test]
     fn test_resolve_primitives() {
-        let checker = Checker::new("");
+        let checker = Checker::new("", None);
         assert_eq!(
             checker.resolve_type(&TypeExpr::Named("Int".to_string())),
             ResolvedType::Int
@@ -696,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_scope_management() {
-        let mut checker = Checker::new("");
+        let mut checker = Checker::new("", None);
         checker.bind("x".to_string(), ResolvedType::Int);
         assert_eq!(checker.lookup("x"), ResolvedType::Int);
         assert_eq!(checker.lookup("y"), ResolvedType::Unknown);
@@ -721,7 +836,7 @@ mod tests {
         let tokens = lexer.tokenize().expect("lex failed");
         let mut parser = crate::parser::Parser::new(tokens, source);
         let program = parser.parse().expect("parse failed");
-        let mut checker = Checker::new(source);
+        let mut checker = Checker::new(source, None);
         checker.collect_declarations(&program);
         (checker, program)
     }
@@ -768,7 +883,7 @@ mod tests {
 
     #[test]
     fn test_infer_literals() {
-        let checker = Checker::new("");
+        let checker = Checker::new("", None);
         assert_eq!(checker.infer_expr(&Expr::IntLiteral(42)), ResolvedType::Int);
         assert_eq!(
             checker.infer_expr(&Expr::FloatLiteral(3.14)),
@@ -787,7 +902,7 @@ mod tests {
 
     #[test]
     fn test_infer_binary_ops() {
-        let checker = Checker::new("");
+        let checker = Checker::new("", None);
         // Int + Int = Int
         let expr = Expr::BinaryOp {
             left: Box::new(Expr::IntLiteral(1)),
@@ -806,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_infer_identifier() {
-        let mut checker = Checker::new("");
+        let mut checker = Checker::new("", None);
         checker.bind("x".to_string(), ResolvedType::Int);
         assert_eq!(
             checker.infer_expr(&Expr::Identifier("x".to_string())),
@@ -820,7 +935,7 @@ mod tests {
 
     #[test]
     fn test_infer_fn_call() {
-        let mut checker = Checker::new("");
+        let mut checker = Checker::new("", None);
         checker.fn_sigs.insert(
             "foo".to_string(),
             FnSig {
@@ -1062,5 +1177,95 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Error);
         assert!(diags[0].message.contains("'name'"));
+    }
+
+    // --- Module resolution tests ---
+
+    fn parse_and_check_with_base(source: &str, base_dir: &std::path::Path) -> Vec<Diagnostic> {
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().expect("lex failed");
+        let mut parser = crate::parser::Parser::new(tokens, source);
+        let program = parser.parse().expect("parse failed");
+        check(&program, source, Some(base_dir))
+    }
+
+    #[test]
+    fn test_check_imported_type() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_check_imported_type");
+        let _ = fs::create_dir_all(dir.join("models"));
+        fs::write(
+            dir.join("models/user.pact"),
+            "type User {\n  name: String,\n  age: Int\n}\n",
+        )
+        .unwrap();
+
+        let source = "use models.user.User\nlet u: User = User { name: \"Alice\", age: 30 }";
+        let diags = parse_and_check_with_base(source, &dir);
+        // User type should be resolved — no errors
+        assert!(
+            diags.is_empty(),
+            "Expected no diagnostics, got: {:?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_check_imported_fn_sig() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_check_imported_fn");
+        let _ = fs::create_dir_all(dir.join("utils"));
+        fs::write(
+            dir.join("utils/math.pact"),
+            "intent \"add\"\nfn add(a: Int, b: Int) -> Int {\n  a + b\n}\n",
+        )
+        .unwrap();
+
+        // Call add with wrong type — checker should catch it
+        let source = "use utils.math.add\nadd(\"hello\", 2)";
+        let diags = parse_and_check_with_base(source, &dir);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("expects Int"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_check_import_file_not_found() {
+        let dir = std::env::temp_dir().join("pact_check_missing_import");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let source = "use nonexistent.module.Foo";
+        let diags = parse_and_check_with_base(source, &dir);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("file not found"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_check_wildcard_import_types() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join("pact_check_wildcard");
+        let _ = fs::create_dir_all(dir.join("defs"));
+        fs::write(
+            dir.join("defs/types.pact"),
+            "type Color = Red | Green | Blue\nintent \"get id\"\nfn get_id(x: Int) -> Int {\n  x\n}\n",
+        )
+        .unwrap();
+
+        // Wildcard import should bring in both the type and the fn sig
+        let source = "use defs.types.*\nget_id(\"wrong\")";
+        let diags = parse_and_check_with_base(source, &dir);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("expects Int"));
+
+        let _ = fs::remove_dir_all(dir);
     }
 }
