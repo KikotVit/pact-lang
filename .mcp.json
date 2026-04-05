@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "pact": {
+      "command": "cargo",
+      "args": ["run", "--quiet", "--", "mcp"]
+    }
+  }
+}
