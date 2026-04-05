@@ -333,9 +333,18 @@ impl Parser {
                         Ok(PipelineStep::OnSuccess { body })
                     } else {
                         let variant = self.expect_identifier()?;
+                        let guard = if self.eat_contextual("where") {
+                            Some(self.parse_or()?)
+                        } else {
+                            None
+                        };
                         self.expect(&TokenKind::Colon)?;
                         let body = self.parse_or()?;
-                        Ok(PipelineStep::OnError { variant, body })
+                        Ok(PipelineStep::OnError {
+                            variant,
+                            guard,
+                            body,
+                        })
                     }
                 }
                 "validate" => {

@@ -868,11 +868,33 @@ impl Interpreter {
                     }
                 }
             }
-            PipelineStep::OnError { variant, body } => {
+            PipelineStep::OnError {
+                variant,
+                guard,
+                body,
+            } => {
                 match &current {
-                    Value::Error { variant: v, .. } if v == variant => {
+                    Value::Error {
+                        variant: v, fields, ..
+                    } if v == variant => {
                         let mut step_env = Environment::with_parent(env.clone());
-                        step_env.bind("_it".to_string(), current.clone(), false);
+                        // For guard: bind _it as a Struct with error fields so .field works
+                        if let Some(f) = fields {
+                            let it_struct = Value::Struct {
+                                type_name: v.clone(),
+                                fields: f.clone(),
+                            };
+                            step_env.bind("_it".to_string(), it_struct, false);
+                        } else {
+                            step_env.bind("_it".to_string(), current.clone(), false);
+                        }
+                        // Check guard condition if present
+                        if let Some(guard_expr) = guard {
+                            let guard_val = self.eval_expr(guard_expr, &mut step_env)?;
+                            if !guard_val.is_truthy() {
+                                return Ok(current); // guard failed, pass through
+                            }
+                        }
                         self.eval_expr(body, &mut step_env)
                     }
                     _ => Ok(current), // pass through
@@ -3657,6 +3679,28 @@ http.get("https://unknown.url")
   | on HttpError: "caught error""#;
         let result = eval_with_effects(input);
         assert_eq!(result, Value::String("caught error".to_string()));
+    }
+
+    #[test]
+    fn test_on_error_where_guard_match() {
+        // Guard matches — should execute body
+        let input = r#"using http = http.mock({})
+http.get("https://unknown.url")
+  | on HttpError where .message != "": "guard matched"
+  | on HttpError: "fallback""#;
+        let result = eval_with_effects(input);
+        assert_eq!(result, Value::String("guard matched".to_string()));
+    }
+
+    #[test]
+    fn test_on_error_where_guard_no_match() {
+        // Guard doesn't match — should fall through to next handler
+        let input = r#"using http = http.mock({})
+http.get("https://unknown.url")
+  | on HttpError where .message == "specific error": "guard matched"
+  | on HttpError: "fallback""#;
+        let result = eval_with_effects(input);
+        assert_eq!(result, Value::String("fallback".to_string()));
     }
 
     #[test]

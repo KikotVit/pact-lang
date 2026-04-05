@@ -201,25 +201,57 @@ pub enum UnaryOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PipelineStep {
-    Filter { predicate: Expr },
-    Map { expr: Expr },
-    Sort { field: Expr, descending: bool },
-    GroupBy { field: Expr },
-    Take { kind: TakeKind, count: Expr },
-    Skip { count: Expr },
-    Each { expr: Expr },
-    FindFirst { predicate: Expr },
-    ExpectOne { error: Expr },
-    ExpectAny { error: Expr },
-    OrDefault { value: Expr },
+    Filter {
+        predicate: Expr,
+    },
+    Map {
+        expr: Expr,
+    },
+    Sort {
+        field: Expr,
+        descending: bool,
+    },
+    GroupBy {
+        field: Expr,
+    },
+    Take {
+        kind: TakeKind,
+        count: Expr,
+    },
+    Skip {
+        count: Expr,
+    },
+    Each {
+        expr: Expr,
+    },
+    FindFirst {
+        predicate: Expr,
+    },
+    ExpectOne {
+        error: Expr,
+    },
+    ExpectAny {
+        error: Expr,
+    },
+    OrDefault {
+        value: Expr,
+    },
     Flatten,
     Unique,
     Count,
     Sum,
     ExpectSuccess,
-    OnSuccess { body: Expr },
-    OnError { variant: String, body: Expr },
-    ValidateAs { type_name: String },
+    OnSuccess {
+        body: Expr,
+    },
+    OnError {
+        variant: String,
+        guard: Option<Expr>,
+        body: Expr,
+    },
+    ValidateAs {
+        type_name: String,
+    },
     Expr(Expr),
 }
 

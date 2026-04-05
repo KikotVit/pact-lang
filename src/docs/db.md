@@ -72,6 +72,14 @@ db.insert("users", user)
 - `.message` — human-readable error description
 - `.kind` — `"constraint"` (duplicate, not null) or `"internal"` (disk, corruption)
 
+Use `where` to match specific error kinds:
+
+```pact
+db.insert("users", user)
+  | on DbError where .kind == "constraint": respond 409 with { error: "Already exists" }
+  | on DbError: respond 500 with { error: .message }
+```
+
 `NotFound` is a separate error type returned by `db.find`, `db.update`, and `db.delete` when the record doesn't exist:
 
 ```pact
