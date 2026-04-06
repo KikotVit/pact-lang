@@ -244,6 +244,75 @@ pub fn check(program: &Program, source: &str, base_dir: Option<&Path>) -> Vec<Di
     checker.diagnostics
 }
 
+#[derive(Debug, Clone)]
+pub enum SymbolKind {
+    Function,
+    Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct Symbol {
+    pub name: String,
+    pub kind: SymbolKind,
+    pub type_info: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckResult {
+    pub diagnostics: Vec<Diagnostic>,
+    pub symbols: Vec<Symbol>,
+}
+
+/// Analyze and return both diagnostics and symbol information (for LSP).
+pub fn check_with_symbols(program: &Program, source: &str, base_dir: Option<&Path>) -> CheckResult {
+    let mut checker = Checker::new(source, base_dir.map(|p| p.to_path_buf()));
+    checker.collect_declarations(program);
+    checker.check_statements(&program.statements);
+
+    let mut symbols = Vec::new();
+
+    for (name, sig) in &checker.fn_sigs {
+        let params_str: Vec<String> = sig
+            .params
+            .iter()
+            .map(|(n, t)| format!("{}: {}", n, t))
+            .collect();
+        symbols.push(Symbol {
+            name: name.clone(),
+            kind: SymbolKind::Function,
+            type_info: format!("fn ({}) -> {}", params_str.join(", "), sig.return_type),
+            detail: None,
+        });
+    }
+
+    for (name, type_def) in &checker.type_defs {
+        let info = match type_def {
+            TypeDef::Struct { fields } => {
+                let fs: Vec<String> = fields
+                    .iter()
+                    .map(|(n, t)| format!("{}: {}", n, t))
+                    .collect();
+                format!("type {{ {} }}", fs.join(", "))
+            }
+            TypeDef::Union { variants } => {
+                format!("type = {}", variants.join(" | "))
+            }
+        };
+        symbols.push(Symbol {
+            name: name.clone(),
+            kind: SymbolKind::Type,
+            type_info: info,
+            detail: None,
+        });
+    }
+
+    CheckResult {
+        diagnostics: checker.diagnostics,
+        symbols,
+    }
+}
+
 impl<'a> Checker<'a> {
     fn collect_declarations(&mut self, program: &Program) {
         for stmt in &program.statements {
