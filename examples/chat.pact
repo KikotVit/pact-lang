@@ -1,0 +1,95 @@
+type Message {
+  id: String,
+  room_id: String,
+  sender: String,
+  text: String,
+  created_at: String,
+}
+
+type Room {
+  id: String,
+  name: String,
+  created_by: String,
+}
+
+type Member {
+  room_id: String,
+  user_id: String,
+  role: String,
+}
+
+intent "create a new chat room"
+route POST "/rooms" {
+  needs db, rng, time, auth
+  let user: User = auth.require(request)
+  let room: Room = {
+    id: rng.uuid(),
+    name: request.body.name,
+    created_by: user.id,
+  }
+  db.insert("rooms", room)
+  db.insert("members", { room_id: room.id, user_id: user.id, role: "owner" })
+  respond 201 with room
+}
+
+intent "list all rooms"
+route GET "/rooms" {
+  needs db, auth
+  auth.require(request)
+  db.query("rooms") | respond 200 with .
+}
+
+intent "send a message to a room"
+route POST "/rooms/{room_id}/messages" {
+  needs db, rng, time, auth
+  let user: User = auth.require(request)
+  db.find("members", { room_id: request.params.room_id, user_id: user.id })
+    | on NotFound: respond 403 with { error: "Not a member of this room" }
+
+  let msg: Message = {
+    id: rng.uuid(),
+    room_id: request.params.room_id,
+    sender: user.id,
+    text: request.body.text,
+    created_at: time.now(),
+  }
+  db.insert("messages", msg) | on success: respond 201 with .
+}
+
+intent "get messages from a room"
+route GET "/rooms/{room_id}/messages" {
+  needs db, auth
+  let user: User = auth.require(request)
+  db.find("members", { room_id: request.params.room_id, user_id: user.id })
+    | on NotFound: respond 403 with { error: "Not a member of this room" }
+
+  db.query("messages", { room_id: request.params.room_id })
+    | sort by .created_at descending
+    | take first 50
+    | respond 200 with .
+}
+
+intent "delete own message, or admin/owner can delete any"
+route DELETE "/rooms/{room_id}/messages/{id}" {
+  needs db, auth
+  let user: User = auth.require(request)
+  let member: Member = db.find("members", { room_id: request.params.room_id, user_id: user.id })
+    | on NotFound: respond 403 with { error: "Not a member of this room" }
+  let msg: Message = db.find("messages", { id: request.params.id })
+    | on NotFound: respond 404 with { error: "Message not found" }
+
+  return respond 403 with { error: "Cannot delete another user's message" }
+    if msg.sender != user.id and member.role != "admin" and member.role != "owner"
+
+  db.delete("messages", msg.id) | on success: respond 200 with { deleted: true }
+}
+
+intent "stream new messages in real-time via SSE"
+stream GET "/rooms/{room_id}/live" {
+  needs db, auth
+  auth.require(request)
+
+  send db.watch("messages", { room_id: request.params.room_id })
+}
+
+app Chat { port: 8080, db: "sqlite://chat.db" }
