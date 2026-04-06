@@ -92,4 +92,11 @@ stream GET "/rooms/{room_id}/live" {
   send db.watch("messages", { room_id: request.params.room_id })
 }
 
+intent "get a JWT token (demo login)"
+route POST "/login" {
+  needs auth
+  let token: String = auth.sign({ id: "user-1", name: "Alice", role: "member" })
+  respond 200 with { token: token }
+}
+
 app Chat { port: 8080, db: "sqlite://chat.db" }

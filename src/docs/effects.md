@@ -53,11 +53,30 @@ let id: String = rng.uuid()
 let hex: String = rng.hex(8)
 ```
 
-## auth — authentication
+## auth — JWT authentication
+
+`auth.require(request)` validates the JWT token from the Authorization header. `auth.sign(payload)` creates a new JWT token.
+
+Set `JWT_SECRET` environment variable to enable real JWT validation. Without it, auth runs in dev mode (accepts any Bearer token).
 
 ```pact
-auth.require("admin")
+intent "login"
+route POST "/login" {
+  needs auth
+  let token: String = auth.sign({ id: "user-1", role: "admin" })
+  respond 200 with { token: token }
+}
+
+intent "protected endpoint"
+route GET "/me" {
+  needs auth
+  let user: User = auth.require(request)
+    | on Unauthorized: respond 401 with { error: "Not authenticated" }
+  respond 200 with user
+}
 ```
+
+Run with: `JWT_SECRET=mysecret pact run app.pact`
 
 ## log — logging
 

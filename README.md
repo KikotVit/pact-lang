@@ -236,7 +236,7 @@ pact test users.pact
 | `db` | `insert`, `query`, `find`, `update`, `delete`, `watch` — backed by SQLite |
 | `time` | `now()` — current timestamp |
 | `rng` | `uuid()`, `hex(n)` — random generation |
-| `auth` | `require(request)` — checks Authorization: Bearer header |
+| `auth` | `require(request)` — validates JWT, `sign(payload)` — creates JWT |
 | `log` | `info()`, `warn()`, `error()` — structured logging |
 | `env` | `get(key)`, `require(key)` — environment variables |
 | `http` | `get`, `post`, `put`, `delete` — HTTP client for external APIs |
@@ -257,7 +257,7 @@ pact test users.pact
 
 PACT is v0.3. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
-What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, module/import system, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact init`, `pact test`, `pact check`, `pact docs`), 408+ tests.
+What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, module/import system, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact init`, `pact test`, `pact check`, `pact docs`), 412+ tests.
 
 What's next: LSP for editor support, web playground.
 

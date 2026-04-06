@@ -11,7 +11,7 @@
 - Errors are values (`Value::Error`), not exceptions. `RuntimeError` is only for interpreter crashes.
 
 ## Testing
-- `cargo test` runs all Rust tests (~408).
+- `cargo test` runs all Rust tests (~412).
 - `pact test file.pact` runs PACT test blocks.
 - Tests use `db.memory()` (HashMap), not SQLite.
 
