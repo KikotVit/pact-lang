@@ -50,6 +50,39 @@ pub struct Interpreter {
     loading_modules: HashSet<PathBuf>,
 }
 
+/// Compute Levenshtein edit distance between two strings.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for i in 0..=a.len() {
+        dp[i][0] = i;
+    }
+    for j in 0..=b.len() {
+        dp[0][j] = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+    dp[a.len()][b.len()]
+}
+
+/// Suggest the closest match from candidates (max distance 2, min length 2).
+fn suggest<'a>(input: &str, candidates: &'a [String]) -> Option<&'a str> {
+    candidates
+        .iter()
+        .filter(|c| c.len() >= 2)
+        .map(|c| (c.as_str(), levenshtein(input, c)))
+        .filter(|(_, d)| *d <= 2 && *d > 0)
+        .min_by_key(|(_, d)| *d)
+        .map(|(name, _)| name)
+}
+
 impl Interpreter {
     pub fn new(source: &str) -> Self {
         Interpreter {
@@ -278,10 +311,18 @@ impl Interpreter {
                         Err(err)
                     } else {
                         let mut err = self.error(&format!("Undefined variable '{}'", name));
-                        err.hint = Some(
-                            "Variables must be declared with 'let' or 'var', or passed as function parameters"
-                                .to_string(),
-                        );
+                        let mut all_names = env.all_names();
+                        all_names.extend(self.global.all_names());
+                        all_names.sort();
+                        all_names.dedup();
+                        if let Some(suggestion) = suggest(name, &all_names) {
+                            err.hint = Some(format!("Did you mean '{}'?", suggestion));
+                        } else {
+                            err.hint = Some(
+                                "Variables must be declared with 'let' or 'var', or passed as function parameters"
+                                    .to_string(),
+                            );
+                        }
                         Err(err)
                     }
                 }
@@ -1055,7 +1096,34 @@ impl Interpreter {
                     }
                     _ => Err(self.error("String.replace() expects two String arguments")),
                 },
-                _ => Err(self.error(&format!("String has no method '{}'", method))),
+                _ => {
+                    let string_methods: Vec<String> = vec![
+                        "length",
+                        "contains",
+                        "to_upper",
+                        "to_lower",
+                        "trim",
+                        "split",
+                        "starts_with",
+                        "ends_with",
+                        "replace",
+                    ]
+                    .into_iter()
+                    .map(String::from)
+                    .collect();
+                    let mut err = self.error(&format!("String has no method '{}'", method));
+                    if let Some(s) = suggest(method, &string_methods) {
+                        err.hint = Some(format!(
+                            "Did you mean '{}'? Available: {}",
+                            s,
+                            string_methods.join(", ")
+                        ));
+                    } else {
+                        err.hint =
+                            Some(format!("Available methods: {}", string_methods.join(", ")));
+                    }
+                    Err(err)
+                }
             },
             Value::List(items) => match method {
                 "length" => Ok(Value::Int(items.len() as i64)),
@@ -1094,7 +1162,26 @@ impl Interpreter {
                     rev.reverse();
                     Ok(Value::List(rev))
                 }
-                _ => Err(self.error(&format!("List has no method '{}'", method))),
+                _ => {
+                    let list_methods: Vec<String> = vec![
+                        "length", "contains", "push", "get", "join", "is_empty", "first", "last",
+                        "reverse",
+                    ]
+                    .into_iter()
+                    .map(String::from)
+                    .collect();
+                    let mut err = self.error(&format!("List has no method '{}'", method));
+                    if let Some(s) = suggest(method, &list_methods) {
+                        err.hint = Some(format!(
+                            "Did you mean '{}'? Available: {}",
+                            s,
+                            list_methods.join(", ")
+                        ));
+                    } else {
+                        err.hint = Some(format!("Available methods: {}", list_methods.join(", ")));
+                    }
+                    Err(err)
+                }
             },
             _ => Err(self.error(&format!(
                 "Cannot call method '{}' on {}",
@@ -3964,5 +4051,73 @@ test "no mock set - unmocked url should fail" {
         let err = eval_fails(input);
         assert!(err.message.contains("No matching pattern"));
         assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn test_did_you_mean_variable() {
+        let input = "let name: String = \"Alice\"\nnme";
+        let err = eval_fails(input);
+        assert!(err.message.contains("Undefined variable 'nme'"));
+        assert!(err.hint.as_ref().unwrap().contains("Did you mean 'name'?"));
+    }
+
+    #[test]
+    fn test_did_you_mean_string_method() {
+        let input = r#""hello".lenght()"#;
+        let err = eval_fails(input);
+        assert!(err.message.contains("String has no method 'lenght'"));
+        assert!(
+            err.hint
+                .as_ref()
+                .unwrap()
+                .contains("Did you mean 'length'?")
+        );
+    }
+
+    #[test]
+    fn test_did_you_mean_list_method() {
+        // Use eval_with_list to have list() builtin available
+        let input = "list(1, 2, 3).contians(1)";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(input);
+        interp.global.bind(
+            "list".to_string(),
+            Value::BuiltinFn {
+                name: "list".to_string(),
+            },
+            false,
+        );
+        let err = interp.interpret(&program).unwrap_err();
+        assert!(
+            err.message.contains("contians"),
+            "Error should mention the typo: {}",
+            err.message
+        );
+        assert!(
+            err.hint.as_ref().unwrap().contains("contains"),
+            "Hint should suggest 'contains': {:?}",
+            err.hint
+        );
+    }
+
+    #[test]
+    fn test_levenshtein_basic() {
+        assert_eq!(super::levenshtein("kitten", "sitting"), 3);
+        assert_eq!(super::levenshtein("", "abc"), 3);
+        assert_eq!(super::levenshtein("abc", "abc"), 0);
+        assert_eq!(super::levenshtein("lenght", "length"), 2);
+    }
+
+    #[test]
+    fn test_suggest_finds_closest() {
+        let candidates: Vec<String> = vec!["name", "age", "email"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(super::suggest("nme", &candidates), Some("name"));
+        assert_eq!(super::suggest("xyz", &candidates), None);
     }
 }

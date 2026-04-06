@@ -51,6 +51,17 @@ impl Environment {
             .collect()
     }
 
+    /// Collect all variable names across the entire environment chain.
+    pub fn all_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.values.keys().cloned().collect();
+        if let Some(ref parent) = self.parent {
+            names.extend(parent.all_names());
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
     pub fn assign(&mut self, name: &str, value: Value) -> Result<(), String> {
         if self.values.contains_key(name) {
             if self.mutables.contains(name) {
@@ -102,6 +113,24 @@ mod tests {
         let mut child = Environment::with_parent(parent);
         child.bind("x".to_string(), Value::Int(20), false);
         assert_eq!(child.lookup("x"), Some(&Value::Int(20)));
+    }
+
+    #[test]
+    fn all_names_collects_chain() {
+        let mut parent = Environment::new();
+        parent.bind("x".to_string(), Value::Int(1), false);
+        parent.bind("y".to_string(), Value::Int(2), false);
+
+        let mut child = Environment::with_parent(parent);
+        child.bind("z".to_string(), Value::Int(3), false);
+        child.bind("x".to_string(), Value::Int(4), false); // shadows parent
+
+        let names = child.all_names();
+        assert!(names.contains(&"x".to_string()));
+        assert!(names.contains(&"y".to_string()));
+        assert!(names.contains(&"z".to_string()));
+        // deduped
+        assert_eq!(names.iter().filter(|n| *n == "x").count(), 1);
     }
 
     #[test]
