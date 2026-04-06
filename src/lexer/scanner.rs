@@ -10,6 +10,7 @@ pub struct Lexer {
     tokens: Vec<Token>,
     delimiter_depth: usize,
     last_token_kind: Option<TokenKind>,
+    comments: Vec<(Span, String)>,
 }
 
 impl Lexer {
@@ -23,6 +24,7 @@ impl Lexer {
             tokens: Vec::new(),
             delimiter_depth: 0,
             last_token_kind: None,
+            comments: Vec::new(),
         }
     }
 
@@ -802,10 +804,34 @@ impl Lexer {
     }
 
     fn skip_comment(&mut self) {
-        // Skip the '//' and everything until end of line
+        let span = self.current_span(0); // will update length after
+        let start_pos = self.pos;
+        // Skip the '//' prefix
+        self.advance(); // skip first /
+        self.advance(); // skip second /
+        // Skip optional space after //
+        if !self.is_at_end() && self.current() == ' ' {
+            self.advance();
+        }
+        let text_start = self.pos;
         while !self.is_at_end() && self.current() != '\n' {
             self.advance();
         }
+        let text: String = self.source[text_start..self.pos].iter().collect();
+        let length = self.pos - start_pos;
+        self.comments.push((
+            Span {
+                line: span.line,
+                column: span.column,
+                offset: span.offset,
+                length,
+            },
+            text,
+        ));
+    }
+
+    pub fn comments(&self) -> &[(Span, String)] {
+        &self.comments
     }
 
     fn make_token(&self, kind: TokenKind, length: usize) -> Token {
@@ -1706,5 +1732,33 @@ mod tests {
         assert!(matches!(&frag.kind, TokenKind::StringFragment(s) if s == "hello"));
         assert_eq!(frag.span.offset, 1); // starts after opening "
         assert_eq!(frag.span.length, 5); // "hello" is 5 chars
+    }
+
+    #[test]
+    fn comments_collected_in_side_channel() {
+        let mut lexer = Lexer::new("a // first comment\nb // second");
+        let tokens = lexer.tokenize().unwrap();
+        // Tokens still work as before
+        assert!(matches!(&tokens[0].kind, TokenKind::Identifier(s) if s == "a"));
+        assert_eq!(tokens[1].kind, TokenKind::Newline);
+        assert!(matches!(&tokens[2].kind, TokenKind::Identifier(s) if s == "b"));
+
+        // Comments captured in side-channel
+        let comments = lexer.comments();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].1, "first comment");
+        assert_eq!(comments[0].0.line, 1);
+        assert_eq!(comments[1].1, "second");
+        assert_eq!(comments[1].0.line, 2);
+    }
+
+    #[test]
+    fn comment_side_channel_preserves_empty_comment() {
+        let mut lexer = Lexer::new("//\nlet x //");
+        let _tokens = lexer.tokenize().unwrap();
+        let comments = lexer.comments();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].1, "");
+        assert_eq!(comments[1].1, "");
     }
 }
