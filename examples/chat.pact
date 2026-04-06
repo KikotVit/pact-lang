@@ -18,26 +18,68 @@ type Member {
   role: String,
 }
 
+type RefreshToken {
+  id: String,
+  user_id: String,
+  created_at: String,
+}
+
+// ── Auth: login, refresh, logout ───────────────────────────────────
+
 intent "login and get access + refresh tokens"
 route POST "/login" {
-  needs auth
+  needs db, auth, rng, time
   let access: String = auth.sign({ id: "user-1", name: "Alice", role: "member", kind: "access", exp: 900 })
-  let refresh: String = auth.sign({ id: "user-1", role: "member", kind: "refresh", exp: 604800 })
+  let refresh_id: String = rng.uuid()
+  let refresh: String = auth.sign({ id: "user-1", role: "member", kind: "refresh", family: refresh_id, exp: 604800 })
+
+  db.insert("refresh_tokens", {
+    id: refresh_id,
+    user_id: "user-1",
+    created_at: time.now(),
+  })
+
   respond 200 with { access: access, refresh: refresh }
 }
 
-intent "refresh access token using refresh token"
+intent "refresh access token with rotation"
 route POST "/refresh" {
-  needs auth
+  needs db, auth, rng, time
   let claims: Struct = auth.verify(request.body.refresh_token)
     | on Unauthorized: respond 401 with { error: "Invalid refresh token" }
 
   return respond 401 with { error: "Not a refresh token" }
     if claims.kind != "refresh"
 
-  let access: String = auth.sign({ id: claims.id, role: claims.role, exp: 900 })
-  respond 200 with { access: access }
+  let stored: RefreshToken = db.find("refresh_tokens", { id: claims.family })
+    | on NotFound: respond 401 with { error: "Token revoked" }
+
+  db.delete("refresh_tokens", stored.id)
+
+  let new_family: String = rng.uuid()
+  let access: String = auth.sign({ id: claims.id, role: claims.role, kind: "access", exp: 900 })
+  let refresh: String = auth.sign({ id: claims.id, role: claims.role, kind: "refresh", family: new_family, exp: 604800 })
+
+  db.insert("refresh_tokens", {
+    id: new_family,
+    user_id: claims.id,
+    created_at: time.now(),
+  })
+
+  respond 200 with { access: access, refresh: refresh }
 }
+
+intent "logout and revoke refresh token"
+route POST "/logout" {
+  needs db, auth
+  let claims: Struct = auth.verify(request.body.refresh_token)
+    | on Unauthorized: respond 401 with { error: "Invalid token" }
+
+  db.delete("refresh_tokens", claims.family)
+  respond 200 with { message: "Logged out" }
+}
+
+// ── Rooms ──────────────────────────────────────────────────────────
 
 intent "create a new chat room"
 route POST "/rooms" {
@@ -61,6 +103,8 @@ route GET "/rooms" {
     | on Unauthorized: respond 401 with { error: "Not authenticated" }
   db.query("rooms") | respond 200 with .
 }
+
+// ── Messages ───────────────────────────────────────────────────────
 
 intent "send a message to a room"
 route POST "/rooms/{room_id}/messages" {
@@ -109,6 +153,8 @@ route DELETE "/rooms/{room_id}/messages/{id}" {
 
   db.delete("messages", msg.id) | on success: respond 200 with { deleted: true }
 }
+
+// ── SSE streaming ──────────────────────────────────────────────────
 
 intent "stream new messages in real-time via SSE"
 stream GET "/rooms/{room_id}/live" {

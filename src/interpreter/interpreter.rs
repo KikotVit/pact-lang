@@ -1921,6 +1921,10 @@ impl Interpreter {
                             _ => 3600,
                         };
                         m.insert("exp".to_string(), serde_json::json!(now + duration));
+                        // Auto-add iat (issued at) if not present
+                        if !m.contains_key("iat") {
+                            m.insert("iat".to_string(), serde_json::json!(now));
+                        }
                         serde_json::Value::Object(m)
                     }
                     _ => return Err(self.error("auth.sign payload must be a struct")),
