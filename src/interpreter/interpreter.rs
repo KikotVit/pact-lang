@@ -5,6 +5,7 @@ use super::db::DbBackend;
 use super::environment::Environment;
 use super::errors::RuntimeError;
 use super::value::Value;
+use crate::lexer::token::Span;
 use crate::parser::ast::{
     BinaryOp, Expr, MatchArm, Pattern, PipelineStep, Program, Statement, StringExpr, StringPart,
     StructField, TakeKind, UnaryOp,
@@ -499,14 +500,18 @@ impl Interpreter {
                 }
             }
             Expr::ErrorPropagation(inner) => self.eval_error_propagation(inner, env),
-            Expr::FnCall { callee, args, .. } => self.eval_fn_call(callee, args, env),
+            Expr::FnCall { callee, args, span } => self.eval_fn_call(callee, args, span, env),
             Expr::Pipeline { .. } => self.eval_pipeline(expr, env),
             Expr::If {
                 condition,
                 then_body,
                 else_body,
             } => self.eval_if(condition, then_body, else_body, env),
-            Expr::Match { subject, arms, .. } => self.eval_match(subject, arms, env),
+            Expr::Match {
+                subject,
+                arms,
+                span,
+            } => self.eval_match(subject, arms, span, env),
             Expr::Block(stmts) => self.eval_block(stmts, env),
             Expr::StructLiteral { name, fields } => self.eval_struct_literal(name, fields, env),
             Expr::Ensure(predicate) => self.eval_ensure(predicate, env),
@@ -553,6 +558,7 @@ impl Interpreter {
         &mut self,
         callee: &Expr,
         args: &[Expr],
+        span: &Option<Span>,
         env: &mut Environment,
     ) -> Result<Value, RuntimeError> {
         // Method calls on String/List: "hello".length(), items.contains(x)
@@ -576,11 +582,14 @@ impl Interpreter {
         match callee_val {
             Value::Function { params, body, .. } => {
                 if params.len() != arg_vals.len() {
-                    return Err(self.error(&format!(
-                        "Expected {} arguments but got {}",
-                        params.len(),
-                        arg_vals.len()
-                    )));
+                    return Err(self.error_at(
+                        span,
+                        &format!(
+                            "Expected {} arguments but got {}",
+                            params.len(),
+                            arg_vals.len()
+                        ),
+                    ));
                 }
                 // Create new env with parent = global (not caller env)
                 let mut fn_env = Environment::with_parent(self.global.clone());
@@ -604,7 +613,10 @@ impl Interpreter {
                 Ok(result)
             }
             Value::BuiltinFn { name } => self.call_builtin(&name, arg_vals),
-            other => Err(self.error(&format!("Cannot call {} as function", other.type_name()))),
+            other => Err(self.error_at(
+                span,
+                &format!("Cannot call {} as function", other.type_name()),
+            )),
         }
     }
 
@@ -1988,6 +2000,7 @@ impl Interpreter {
         &mut self,
         subject: &Expr,
         arms: &[MatchArm],
+        span: &Option<Span>,
         env: &mut Environment,
     ) -> Result<Value, RuntimeError> {
         let subject_val = self.eval_expr(subject, env)?;
@@ -1998,7 +2011,10 @@ impl Interpreter {
             }
         }
 
-        let mut err = self.error(&format!("No matching pattern for value: {}", subject_val));
+        let mut err = self.error_at(
+            span,
+            &format!("No matching pattern for value: {}", subject_val),
+        );
         err.hint = Some("Add a catch-all arm: _ => ...".to_string());
         Err(err)
     }
@@ -2188,7 +2204,7 @@ impl Interpreter {
 
     /// Create a RuntimeError with the given message.
     /// Uses line 1, column 1, and the first source line as defaults
-    /// since the AST doesn't carry position information.
+    /// when no span information is available.
     fn error(&self, message: &str) -> RuntimeError {
         let source_line = self.source.lines().next().unwrap_or("").to_string();
         RuntimeError {
@@ -2197,6 +2213,28 @@ impl Interpreter {
             message: message.to_string(),
             hint: None,
             source_line,
+        }
+    }
+
+    /// Create a RuntimeError using AST span information for accurate line/col.
+    /// Falls back to error() when span is None.
+    fn error_at(&self, span: &Option<Span>, message: &str) -> RuntimeError {
+        if let Some(span) = span {
+            let source_line = self
+                .source
+                .lines()
+                .nth(span.line - 1)
+                .unwrap_or("")
+                .to_string();
+            RuntimeError {
+                line: span.line,
+                column: span.column,
+                message: message.to_string(),
+                hint: None,
+                source_line,
+            }
+        } else {
+            self.error(message)
         }
     }
 
@@ -3901,5 +3939,30 @@ test "no mock set - unmocked url should fail" {
         );
         // Second test: no mock set, so real request would happen (or no mock = no interception)
         // The key assertion: mock from test A should NOT leak to test B
+    }
+
+    #[test]
+    fn test_fn_call_error_has_correct_line() {
+        let input = "let x: Int = 1\nlet y: Int = 2\nx(42)";
+        let err = eval_fails(input);
+        assert!(err.message.contains("Cannot call"));
+        assert_eq!(err.line, 3);
+        assert!(err.source_line.contains("x(42)"));
+    }
+
+    #[test]
+    fn test_fn_call_arg_count_error_has_correct_line() {
+        let input = "intent \"add\"\nfn add(a: Int, b: Int) -> Int { a + b }\nlet r: Int = add(1)";
+        let err = eval_fails(input);
+        assert!(err.message.contains("Expected 2 arguments but got 1"));
+        assert_eq!(err.line, 3);
+    }
+
+    #[test]
+    fn test_match_error_has_correct_line() {
+        let input = "let x: Int = 42\nmatch x {\n  1 => \"one\"\n  2 => \"two\"\n}";
+        let err = eval_fails(input);
+        assert!(err.message.contains("No matching pattern"));
+        assert_eq!(err.line, 2);
     }
 }
