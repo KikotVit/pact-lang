@@ -257,9 +257,9 @@ pact test users.pact
 
 PACT is v0.3. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
-What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact init`, `pact test`, `pact check`, `pact docs`), 408+ tests.
+What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, module/import system, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact init`, `pact test`, `pact check`, `pact docs`), 408+ tests.
 
-What's next: authentication (JWT/API keys), import/module system, pipeline extensions, LSP for editor support.
+What's next: LSP for editor support, web playground.
 
 ## License
 
