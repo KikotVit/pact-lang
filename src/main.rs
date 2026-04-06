@@ -25,6 +25,7 @@ fn main() {
             "  pact run <file.pact>       Run a .pact program (starts HTTP server if app is declared)"
         );
         println!("  pact init [name]           Create a new PACT project");
+        println!("  pact fmt <file.pact>       Format source code (--check for CI)");
         println!("  pact check <file.pact>     Check syntax and types");
         println!("  pact test <file.pact>      Run test blocks");
         println!("  pact docs [topic]          Show language documentation");
@@ -111,6 +112,42 @@ fn main() {
     // pact mcp
     if args.len() >= 2 && args[1] == "mcp" {
         pact::mcp::run_mcp_server();
+        return;
+    }
+
+    // pact fmt <file> [--check]
+    if args.len() >= 3 && args[1] == "fmt" {
+        let filename = &args[2];
+        let check_only = args.iter().any(|a| a == "--check");
+
+        let source = match fs::read_to_string(filename) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error reading '{}': {}", filename, e);
+                process::exit(1);
+            }
+        };
+
+        match pact::formatter::format(&source) {
+            Ok(formatted) => {
+                if check_only {
+                    if source != formatted {
+                        eprintln!("{} needs formatting", filename);
+                        process::exit(1);
+                    }
+                } else if source != formatted {
+                    if let Err(e) = fs::write(filename, &formatted) {
+                        eprintln!("Error writing '{}': {}", filename, e);
+                        process::exit(1);
+                    }
+                    println!("Formatted {}", filename);
+                }
+            }
+            Err(e) => {
+                eprintln!("{}", e);
+                process::exit(1);
+            }
+        }
         return;
     }
 
