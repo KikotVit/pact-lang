@@ -15,7 +15,7 @@ use crate::interpreter::value::Value;
 // ── Rate limiting ──────────────────────────────────────────────────
 
 const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
-const RATE_LIMIT_MAX: u32 = 60; // 60 requests per minute per IP
+const RATE_LIMIT_DEFAULT: u32 = 200; // 200 requests per minute per IP
 
 struct RateLimiter {
     clients: HashMap<String, (u32, Instant)>,
@@ -29,6 +29,13 @@ impl RateLimiter {
     }
 
     fn check(&mut self, ip: &str) -> bool {
+        let max = std::env::var("RATE_LIMIT")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(RATE_LIMIT_DEFAULT);
+        if max == 0 {
+            return true; // disabled
+        }
         let now = Instant::now();
         let entry = self.clients.entry(ip.to_string()).or_insert((0, now));
         if now.duration_since(entry.1) > RATE_LIMIT_WINDOW {
@@ -36,7 +43,7 @@ impl RateLimiter {
             true
         } else {
             entry.0 += 1;
-            entry.0 <= RATE_LIMIT_MAX
+            entry.0 <= max
         }
     }
 }
