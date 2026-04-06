@@ -27,7 +27,7 @@ pub enum TokenKind {
     InterpolationStart,
     InterpolationEnd,
 
-    // Keywords (23 reserved)
+    // Keywords (24 reserved)
     Fn,
     Let,
     Var,
@@ -41,6 +41,7 @@ pub enum TokenKind {
     Ensure,
     Needs,
     Route,
+    Stream,
     Test,
     App,
     Check,
@@ -113,6 +114,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Ensure => write!(f, "'ensure'"),
             TokenKind::Needs => write!(f, "'needs'"),
             TokenKind::Route => write!(f, "'route'"),
+            TokenKind::Stream => write!(f, "'stream'"),
             TokenKind::Test => write!(f, "'test'"),
             TokenKind::App => write!(f, "'app'"),
             TokenKind::Check => write!(f, "'check'"),
@@ -172,6 +174,7 @@ impl TokenKind {
             "ensure" => Some(TokenKind::Ensure),
             "needs" => Some(TokenKind::Needs),
             "route" => Some(TokenKind::Route),
+            "stream" => Some(TokenKind::Stream),
             "test" => Some(TokenKind::Test),
             "app" => Some(TokenKind::App),
             "check" => Some(TokenKind::Check),

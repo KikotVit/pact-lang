@@ -26,6 +26,14 @@ pub struct StoredRoute {
     pub body: Vec<Statement>,
 }
 
+pub struct StoredStream {
+    pub method: String,
+    pub path: String,
+    pub intent: String,
+    pub effects: Vec<String>,
+    pub body: Vec<Statement>,
+}
+
 pub struct Interpreter {
     pub global: Environment,
     source: String,
@@ -39,6 +47,7 @@ pub struct Interpreter {
     pub module_cache: HashMap<PathBuf, Environment>,
     pub type_defs: HashMap<String, Vec<(String, bool)>>, // (field_name, is_optional)
     pub routes: Vec<StoredRoute>,
+    pub streams: Vec<StoredStream>,
     pub app_config: Option<(String, u16, Option<String>)>,
     /// Predetermined sequence for rng (testing)
     rng_sequence: Option<Vec<String>>,
@@ -97,6 +106,7 @@ impl Interpreter {
             module_cache: HashMap::new(),
             type_defs: HashMap::new(),
             routes: Vec::new(),
+            streams: Vec::new(),
             app_config: None,
             rng_sequence: None,
             blocked_effects: Vec::new(),
@@ -264,6 +274,22 @@ impl Interpreter {
                 body,
             } => {
                 self.routes.push(StoredRoute {
+                    method: method.clone(),
+                    path: path.clone(),
+                    intent: intent.clone(),
+                    effects: effects.clone(),
+                    body: body.clone(),
+                });
+                Ok(StmtResult::Value(Value::Nothing))
+            }
+            Statement::Stream {
+                method,
+                path,
+                intent,
+                effects,
+                body,
+            } => {
+                self.streams.push(StoredStream {
                     method: method.clone(),
                     path: path.clone(),
                     intent: intent.clone(),
@@ -679,6 +705,10 @@ impl Interpreter {
                     type_name: "Response".to_string(),
                     fields,
                 })
+            }
+            Expr::Send { body } => {
+                let val = self.eval_expr(body, env)?;
+                Ok(val)
             }
         }
     }
@@ -1331,6 +1361,7 @@ impl Interpreter {
             "db.find" => self.builtin_db_find(args),
             "db.update" => self.builtin_db_update(args),
             "db.delete" => self.builtin_db_delete(args),
+            "db.watch" => self.builtin_db_watch(args),
             "time.now" => self.builtin_time_now(),
             "rng.uuid" => self.builtin_rng_uuid(),
             "rng.hex" => self.builtin_rng_hex(args),
@@ -1456,7 +1487,7 @@ impl Interpreter {
             "http.delete" => self.builtin_http_request("DELETE", args),
             _ => {
                 let mut err = self.error(&format!("Unknown builtin '{}'", name));
-                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), time.now(), rng.uuid(), rng.hex(), log.info(), log.warn(), log.error(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
+                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), db.watch(), time.now(), rng.uuid(), rng.hex(), log.info(), log.warn(), log.error(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
                 Err(err)
             }
         }
@@ -1772,6 +1803,20 @@ impl Interpreter {
         self.db.delete(&table_name, &id)
     }
 
+    fn builtin_db_watch(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        if args.is_empty() || args.len() > 2 {
+            return Err(
+                self.error("db.watch expects 1-2 arguments: table name, optional filter struct")
+            );
+        }
+        let table = match &args[0] {
+            Value::String(s) => s.clone(),
+            _ => return Err(self.error("db.watch first argument must be a String table name")),
+        };
+        let filter = args.get(1).cloned().map(Box::new);
+        Ok(Value::DbWatch { table, filter })
+    }
+
     fn builtin_time_now(&self) -> Result<Value, RuntimeError> {
         let time_str = self
             .fixed_time
@@ -1864,6 +1909,12 @@ impl Interpreter {
             "memory".to_string(),
             Value::BuiltinFn {
                 name: "db.memory".to_string(),
+            },
+        );
+        db_methods.insert(
+            "watch".to_string(),
+            Value::BuiltinFn {
+                name: "db.watch".to_string(),
             },
         );
         self.global.bind(
@@ -2105,6 +2156,12 @@ impl Interpreter {
             "memory".to_string(),
             Value::BuiltinFn {
                 name: "db.memory".to_string(),
+            },
+        );
+        methods.insert(
+            "watch".to_string(),
+            Value::BuiltinFn {
+                name: "db.watch".to_string(),
             },
         );
         Value::Effect {
@@ -2623,6 +2680,70 @@ impl Interpreter {
         }
         self.blocked_effects.clear();
         Ok(result)
+    }
+
+    pub fn execute_stream(
+        &mut self,
+        stream: &StoredStream,
+        request: Value,
+    ) -> Result<Value, RuntimeError> {
+        let known_effects: Vec<String> = ["db", "auth", "log", "time", "rng", "env", "http"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        self.blocked_effects = known_effects
+            .iter()
+            .filter(|e| !stream.effects.contains(e))
+            .cloned()
+            .collect();
+
+        let mut env = Environment::with_parent(self.global.clone());
+        env.bind("request".to_string(), request, false);
+
+        for effect_name in &stream.effects {
+            if let Some(effect) = self.global.lookup(effect_name) {
+                env.bind(effect_name.clone(), effect.clone(), false);
+            }
+        }
+
+        let mut result = Value::Nothing;
+        let body = stream.body.clone();
+        for stmt in &body {
+            match self.eval_statement(stmt, &mut env) {
+                Ok(StmtResult::Value(val)) => result = val,
+                Ok(StmtResult::Return(val)) => {
+                    self.blocked_effects.clear();
+                    return Ok(val);
+                }
+                Err(ref e) if Self::is_return_error(e) => {
+                    self.blocked_effects.clear();
+                    return Ok(self.take_return_value());
+                }
+                Err(e) => {
+                    self.blocked_effects.clear();
+                    return Err(e);
+                }
+            }
+        }
+        self.blocked_effects.clear();
+        Ok(result)
+    }
+
+    /// Get the raw SQLite file path (stripped of sqlite:// prefix), resolved relative to base_dir.
+    pub fn get_db_path(&self) -> Option<String> {
+        self.app_config
+            .as_ref()
+            .and_then(|c| c.2.as_ref())
+            .map(|url| {
+                let raw = url.strip_prefix("sqlite://").unwrap_or(url);
+                if let Some(ref base) = self.base_dir {
+                    if let Some(parent) = std::path::Path::new(base).parent() {
+                        return parent.join(raw).to_string_lossy().to_string();
+                    }
+                }
+                raw.to_string()
+            })
     }
 
     // --- Test runner ---

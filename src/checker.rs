@@ -580,7 +580,7 @@ impl<'a> Checker<'a> {
                 }
             }
             // Check route body
-            Statement::Route { body, .. } => {
+            Statement::Route { body, .. } | Statement::Stream { body, .. } => {
                 self.push_scope();
                 self.bind("request".to_string(), ResolvedType::Unknown);
                 self.check_statements(body);
@@ -722,6 +722,13 @@ impl<'a> Checker<'a> {
             Expr::Pipeline { source, .. } => {
                 self.check_expr(source);
             }
+            Expr::Send { body } => {
+                self.check_expr(body);
+            }
+            Expr::Respond { status, body } => {
+                self.check_expr(status);
+                self.check_expr(body);
+            }
             _ => {}
         }
     }
@@ -790,6 +797,7 @@ impl<'a> Checker<'a> {
                 }
             }
             Expr::Respond { .. } => ResolvedType::Nothing,
+            Expr::Send { body } => self.infer_expr(body),
             _ => ResolvedType::Unknown,
         }
     }

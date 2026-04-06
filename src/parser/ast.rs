@@ -51,6 +51,13 @@ pub enum Statement {
         effects: Vec<String>,
         body: Vec<Statement>,
     },
+    Stream {
+        method: String,
+        path: String,
+        intent: String,
+        effects: Vec<String>,
+        body: Vec<Statement>,
+    },
     App {
         name: String,
         port: u16,
@@ -142,6 +149,9 @@ pub enum Expr {
     },
     Respond {
         status: Box<Expr>,
+        body: Box<Expr>,
+    },
+    Send {
         body: Box<Expr>,
     },
 }

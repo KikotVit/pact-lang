@@ -597,6 +597,13 @@ impl Parser {
                     body: Box::new(body),
                 })
             }
+            TokenKind::Identifier(ref name) if name == "send" => {
+                self.advance();
+                let body = self.parse_or()?;
+                Ok(Expr::Send {
+                    body: Box::new(body),
+                })
+            }
             TokenKind::Identifier(name) => {
                 self.advance();
                 // Struct literal: PascalCase followed by {
@@ -792,6 +799,8 @@ impl Parser {
                 self.skip_newlines();
                 if self.at(&TokenKind::Route) {
                     self.parse_route_with_intent(intent)?
+                } else if self.at(&TokenKind::Stream) {
+                    self.parse_stream_with_intent(intent)?
                 } else {
                     self.parse_fn_decl(Some(intent))?
                 }
@@ -800,6 +809,12 @@ impl Parser {
                 return Err(self.error(
                     "Missing 'intent' block before route declaration",
                     Some("Write: intent \"description\" on the line before route"),
+                ));
+            }
+            TokenKind::Stream => {
+                return Err(self.error(
+                    "Missing 'intent' block before stream declaration",
+                    Some("Write: intent \"description\" on the line before stream"),
                 ));
             }
             TokenKind::App => self.parse_app()?,
@@ -1343,6 +1358,43 @@ impl Parser {
         self.expect_closing_brace()?;
 
         Ok(Statement::Route {
+            method,
+            path,
+            intent,
+            effects,
+            body,
+        })
+    }
+
+    fn parse_stream_with_intent(&mut self, intent: String) -> Result<Statement, ParseError> {
+        self.advance(); // consume `stream`
+        let method = self.expect_identifier()?;
+        let path = self.parse_route_path()?;
+        self.push_block("stream");
+        self.expect(&TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        // Optional: needs
+        let mut effects = Vec::new();
+        if self.eat(&TokenKind::Needs)
+            && !self.at(&TokenKind::LBrace)
+            && !self.at(&TokenKind::Newline)
+        {
+            effects.push(self.expect_identifier()?);
+            while self.eat(&TokenKind::Comma) {
+                if self.at(&TokenKind::LBrace) || self.at(&TokenKind::Newline) {
+                    break;
+                }
+                effects.push(self.expect_identifier()?);
+            }
+        }
+        self.skip_newlines();
+
+        // Body
+        let body = self.parse_block_body()?;
+        self.expect_closing_brace()?;
+
+        Ok(Statement::Stream {
             method,
             path,
             intent,

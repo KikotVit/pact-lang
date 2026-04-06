@@ -38,6 +38,10 @@ pub enum Value {
         name: String,
         methods: HashMap<String, Value>,
     },
+    DbWatch {
+        table: String,
+        filter: Option<Box<Value>>,
+    },
 }
 
 impl Value {
@@ -57,6 +61,7 @@ impl Value {
             Value::Function { .. } => "Function",
             Value::BuiltinFn { .. } => "BuiltinFn",
             Value::Effect { .. } => "Effect",
+            Value::DbWatch { .. } => "DbWatch",
         }
     }
 
@@ -153,6 +158,7 @@ impl fmt::Display for Value {
             Value::Function { name, .. } => write!(f, "<fn {}>", name),
             Value::BuiltinFn { name } => write!(f, "<builtin {}>", name),
             Value::Effect { name, .. } => write!(f, "<effect {}>", name),
+            Value::DbWatch { table, .. } => write!(f, "DbWatch({})", table),
         }
     }
 }
