@@ -2747,4 +2747,61 @@ route GET "/users/{id}" {
             err[0]
         );
     }
+
+    #[test]
+    fn parse_stream_route() {
+        let input = r#"
+intent "stream data"
+stream GET "/events" {
+  needs db
+  send db.watch("items")
+}
+"#;
+        let program = parse_program(input);
+        assert_eq!(program.statements.len(), 1);
+        match &program.statements[0] {
+            Statement::Stream {
+                method,
+                path,
+                intent,
+                effects,
+                ..
+            } => {
+                assert_eq!(method, "GET");
+                assert_eq!(path, "/events");
+                assert_eq!(intent, "stream data");
+                assert_eq!(effects, &["db"]);
+            }
+            other => panic!("Expected Stream, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_send_expression() {
+        let input = r#"
+intent "stream"
+stream GET "/live" {
+  send 42
+}
+"#;
+        let program = parse_program(input);
+        match &program.statements[0] {
+            Statement::Stream { body, .. } => {
+                // body should contain an expression statement with Send
+                assert!(!body.is_empty());
+            }
+            other => panic!("Expected Stream, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn bare_stream_error_has_hint() {
+        let input = r#"stream GET "/events" { }"#;
+        let mut lexer = crate::lexer::Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let err = parser.parse().unwrap_err();
+        assert!(err[0].message.contains("intent"));
+        assert!(err[0].hint.is_some());
+    }
 }

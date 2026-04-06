@@ -1049,4 +1049,64 @@ mod tests {
             panic!("expected Value::List, got {:?}", result);
         }
     }
+
+    #[test]
+    fn sse_query_empty_table() {
+        let conn = Connection::open(":memory:").unwrap();
+        conn.execute_batch("CREATE TABLE items (name TEXT, value INTEGER);")
+            .unwrap();
+        let rows = sse_query_new_rows(&conn, "items", &None, 0).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn sse_query_returns_new_rows() {
+        let conn = Connection::open(":memory:").unwrap();
+        conn.execute_batch("CREATE TABLE msgs (text TEXT, room TEXT);")
+            .unwrap();
+        conn.execute("INSERT INTO msgs (text, room) VALUES ('hello', 'r1')", [])
+            .unwrap();
+        conn.execute("INSERT INTO msgs (text, room) VALUES ('world', 'r1')", [])
+            .unwrap();
+
+        // Get all rows since rowid 0
+        let rows = sse_query_new_rows(&conn, "msgs", &None, 0).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].1.contains("hello"));
+        assert!(rows[1].1.contains("world"));
+
+        // Get only rows since rowid 1
+        let rows = sse_query_new_rows(&conn, "msgs", &None, 1).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].1.contains("world"));
+    }
+
+    #[test]
+    fn sse_query_with_filter() {
+        let conn = Connection::open(":memory:").unwrap();
+        conn.execute_batch("CREATE TABLE msgs (text TEXT, room TEXT);")
+            .unwrap();
+        conn.execute("INSERT INTO msgs (text, room) VALUES ('hello', 'r1')", [])
+            .unwrap();
+        conn.execute("INSERT INTO msgs (text, room) VALUES ('world', 'r2')", [])
+            .unwrap();
+
+        let mut filter_fields = HashMap::new();
+        filter_fields.insert("room".to_string(), Value::String("r1".to_string()));
+        let filter = Some(Box::new(Value::Struct {
+            type_name: "Filter".to_string(),
+            fields: filter_fields,
+        }));
+
+        let rows = sse_query_new_rows(&conn, "msgs", &filter, 0).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].1.contains("hello"));
+    }
+
+    #[test]
+    fn sse_query_nonexistent_table() {
+        let conn = Connection::open(":memory:").unwrap();
+        let rows = sse_query_new_rows(&conn, "nonexistent", &None, 0).unwrap();
+        assert!(rows.is_empty());
+    }
 }

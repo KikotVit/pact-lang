@@ -4396,4 +4396,58 @@ user.nme"#;
         assert!(err.message.contains("Cannot call"));
         assert!(err.hint.is_some());
     }
+
+    #[test]
+    fn test_db_watch_returns_dbwatch() {
+        let input = r#"db.watch("users")"#;
+        let result = eval_with_effects(input);
+        match result {
+            Value::DbWatch { table, filter } => {
+                assert_eq!(table, "users");
+                assert!(filter.is_none());
+            }
+            other => panic!("Expected DbWatch, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_db_watch_with_filter() {
+        let input = r#"db.watch("messages", { room_id: "abc" })"#;
+        let result = eval_with_effects(input);
+        match result {
+            Value::DbWatch { table, filter } => {
+                assert_eq!(table, "messages");
+                assert!(filter.is_some());
+            }
+            other => panic!("Expected DbWatch, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_send_evaluates_inner() {
+        let input = r#"send 42"#;
+        let result = eval(input);
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn test_stream_routes_stored() {
+        let source = r#"
+intent "stream"
+stream GET "/events" {
+  needs db
+  send db.watch("items")
+}
+"#;
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens, source);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(source);
+        interp.setup_test_effects();
+        let _ = interp.interpret(&program);
+        assert_eq!(interp.streams.len(), 1);
+        assert_eq!(interp.streams[0].method, "GET");
+        assert_eq!(interp.streams[0].path, "/events");
+    }
 }
