@@ -319,6 +319,116 @@ fn execute_pact_docs(params: &serde_json::Value) -> serde_json::Value {
     }
 }
 
+fn execute_pact_format(params: &serde_json::Value) -> serde_json::Value {
+    let source = match get_source(params) {
+        Ok(s) => s,
+        Err(msg) => {
+            return make_tool_result(
+                &serde_json::json!({"errors": [{"phase": "input", "message": msg}]}).to_string(),
+                true,
+            );
+        }
+    };
+
+    match crate::formatter::format(&source) {
+        Ok(formatted) => make_tool_result(
+            &serde_json::json!({"formatted": formatted}).to_string(),
+            false,
+        ),
+        Err(e) => make_tool_result(
+            &serde_json::json!({"errors": [{"phase": "formatter", "message": e}]}).to_string(),
+            true,
+        ),
+    }
+}
+
+fn execute_pact_test(params: &serde_json::Value) -> serde_json::Value {
+    let source = match get_source(params) {
+        Ok(s) => s,
+        Err(msg) => {
+            return make_tool_result(
+                &serde_json::json!({"errors": [{"phase": "input", "message": msg}]}).to_string(),
+                true,
+            );
+        }
+    };
+
+    let file_path = params.get("file").and_then(|v| v.as_str());
+
+    let mut lexer = Lexer::new(&source);
+    let tokens = match lexer.tokenize() {
+        Ok(t) => t,
+        Err(e) => {
+            let errors = vec![pact_error_json(
+                "lexer",
+                e.line,
+                e.column,
+                &e.message,
+                &e.hint,
+                &e.source_line,
+            )];
+            return make_tool_result(&serde_json::json!({"errors": errors}).to_string(), true);
+        }
+    };
+
+    let mut parser = Parser::new(tokens, &source);
+    let program = match parser.parse() {
+        Ok(p) => p,
+        Err(errors) => {
+            let err_list: Vec<serde_json::Value> = errors
+                .iter()
+                .map(|e| {
+                    pact_error_json(
+                        "parser",
+                        e.line,
+                        e.column,
+                        &e.message,
+                        &e.hint,
+                        &e.source_line,
+                    )
+                })
+                .collect();
+            return make_tool_result(&serde_json::json!({"errors": err_list}).to_string(), true);
+        }
+    };
+
+    let mut interp = Interpreter::new(&source);
+    if let Some(path) = file_path {
+        interp.set_base_dir(path);
+    }
+    interp.setup_test_effects();
+    let results = interp.run_tests(&program);
+
+    let total = results.len();
+    let passed = results.iter().filter(|r| r.passed).count();
+    let failed = total - passed;
+
+    let test_results: Vec<serde_json::Value> = results
+        .iter()
+        .map(|r| {
+            let mut obj = serde_json::json!({
+                "name": r.name,
+                "passed": r.passed,
+            });
+            if let Some(ref err) = r.error {
+                obj["error"] = serde_json::json!(err);
+            }
+            obj
+        })
+        .collect();
+
+    make_tool_result(
+        &serde_json::json!({
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "tests": test_results,
+        })
+        .to_string(),
+        failed > 0,
+    )
+}
+
 // --- Protocol handlers ---
 
 fn handle_initialize(id: &serde_json::Value) -> serde_json::Value {
@@ -391,6 +501,42 @@ fn handle_tools_list(id: &serde_json::Value) -> serde_json::Value {
                         },
                         "additionalProperties": false
                     }
+                },
+                {
+                    "name": "pact_format",
+                    "description": "Format PACT source code with consistent style (2-space indent, trailing commas, pipeline steps on new lines). Returns the formatted source.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "type": "string",
+                                "description": "Inline PACT source code to format"
+                            },
+                            "file": {
+                                "type": "string",
+                                "description": "Path to a .pact file to format"
+                            }
+                        },
+                        "additionalProperties": false
+                    }
+                },
+                {
+                    "name": "pact_test",
+                    "description": "Run test blocks in PACT code and return results with pass/fail status for each test.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "type": "string",
+                                "description": "Inline PACT source code containing test blocks"
+                            },
+                            "file": {
+                                "type": "string",
+                                "description": "Path to a .pact file containing test blocks"
+                            }
+                        },
+                        "additionalProperties": false
+                    }
                 }
             ]
         }),
@@ -408,6 +554,8 @@ fn handle_tools_call(id: &serde_json::Value, params: &serde_json::Value) -> serd
         "pact_run" => execute_pact_run(&arguments),
         "pact_check" => execute_pact_check(&arguments),
         "pact_docs" => execute_pact_docs(&arguments),
+        "pact_format" => execute_pact_format(&arguments),
+        "pact_test" => execute_pact_test(&arguments),
         _ => make_tool_result(&format!("Unknown tool: '{}'", tool_name), true),
     };
 
@@ -500,13 +648,15 @@ mod tests {
         let msg = serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
         let resp = handle_message(&msg).unwrap();
         let tools = resp["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 3);
+        assert_eq!(tools.len(), 5);
         assert_eq!(tools[0]["name"], "pact_run");
         assert_eq!(tools[1]["name"], "pact_check");
         assert_eq!(tools[2]["name"], "pact_docs");
-        assert!(tools[0]["inputSchema"].is_object());
-        assert!(tools[1]["inputSchema"].is_object());
-        assert!(tools[2]["inputSchema"].is_object());
+        assert_eq!(tools[3]["name"], "pact_format");
+        assert_eq!(tools[4]["name"], "pact_test");
+        for tool in tools {
+            assert!(tool["inputSchema"].is_object());
+        }
     }
 
     #[test]
@@ -762,5 +912,82 @@ mod tests {
         assert_eq!(text["valid"], true);
         assert!(text.get("errors").is_none());
         assert!(text.get("warnings").is_none());
+    }
+
+    #[test]
+    fn test_pact_format() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 20,
+            "method": "tools/call",
+            "params": {
+                "name": "pact_format",
+                "arguments": {"code": "let  x:Int=42\n"}
+            }
+        });
+        let resp = handle_message(&msg).unwrap();
+        assert!(resp["result"].get("isError").is_none());
+        let text: serde_json::Value =
+            serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(
+            text["formatted"]
+                .as_str()
+                .unwrap()
+                .contains("let x: Int = 42")
+        );
+    }
+
+    #[test]
+    fn test_pact_format_error() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "tools/call",
+            "params": {
+                "name": "pact_format",
+                "arguments": {"code": "let !!!"}
+            }
+        });
+        let resp = handle_message(&msg).unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+    }
+
+    #[test]
+    fn test_pact_test_passing() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 22,
+            "method": "tools/call",
+            "params": {
+                "name": "pact_test",
+                "arguments": {"code": "test \"basic\" {\n  assert 1 == 1\n}\n"}
+            }
+        });
+        let resp = handle_message(&msg).unwrap();
+        assert!(resp["result"].get("isError").is_none());
+        let text: serde_json::Value =
+            serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text["total"], 1);
+        assert_eq!(text["passed"], 1);
+        assert_eq!(text["failed"], 0);
+    }
+
+    #[test]
+    fn test_pact_test_failing() {
+        let msg = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 23,
+            "method": "tools/call",
+            "params": {
+                "name": "pact_test",
+                "arguments": {"code": "test \"fails\" {\n  assert 1 == 2\n}\n"}
+            }
+        });
+        let resp = handle_message(&msg).unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+        let text: serde_json::Value =
+            serde_json::from_str(resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text["total"], 1);
+        assert_eq!(text["failed"], 1);
     }
 }
