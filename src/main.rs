@@ -29,6 +29,7 @@ fn main() {
         println!("  pact check <file.pact>     Check syntax and types");
         println!("  pact test <file.pact>      Run test blocks");
         println!("  pact docs [topic]          Show language documentation");
+        println!("  pact lsp                   Start LSP server (stdio, for editors)");
         println!("  pact mcp                   Start MCP tool server (stdio)");
         println!("  pact <file.pact> --ast     Print the AST");
         println!("  pact <file.pact>           Print the token stream");
@@ -112,6 +113,12 @@ fn main() {
     // pact mcp
     if args.len() >= 2 && args[1] == "mcp" {
         pact::mcp::run_mcp_server();
+        return;
+    }
+
+    // pact lsp
+    if args.len() >= 2 && args[1] == "lsp" {
+        pact::lsp::run_lsp_server();
         return;
     }
 
