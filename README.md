@@ -76,7 +76,7 @@ Traditional languages hide intent in comments (which drift from code), hide effe
 
 ### Connect your AI agent via MCP
 
-PACT has a built-in [MCP](https://modelcontextprotocol.io/) server. Your AI coding agent gets three tools: `pact_run` (execute code), `pact_check` (validate syntax + types), `pact_docs` (read language documentation).
+PACT has a built-in [MCP](https://modelcontextprotocol.io/) server. Your AI coding agent gets five tools: `pact_run` (execute code), `pact_check` (validate syntax + types), `pact_docs` (read docs), `pact_format` (format code), `pact_test` (run tests).
 
 **Claude Code** — add to your project's `.mcp.json`:
 
@@ -227,6 +227,7 @@ pact test users.pact
 | Strings | `"Hello {user.name}, you have {count} items"` |
 | HTTP routes | `route GET "/users/{id}" { ... }` |
 | SSE streaming | `stream GET "/live" { send db.watch("table") }` |
+| Validation | `name: String \| minlen 1 \| maxlen 100` on type fields |
 | App | `app Name { port: 8080, db: "sqlite://data.db" }` |
 
 ## Built-in effects
@@ -247,19 +248,21 @@ pact test users.pact
 |---------|-------------|
 | `pact run file.pact` | Run a program (starts HTTP server if app is declared) |
 | `pact init [name]` | Create a new project (default: `my-app`) |
+| `pact fmt file.pact` | Format source code (`--check` for CI) |
 | `pact test file.pact` | Run test blocks |
 | `pact check file.pact` | Validate syntax and check types |
 | `pact docs` | List all documentation topics |
 | `pact docs <topic>` | Show documentation for a topic (e.g. `pipeline`, `route`, `db`) |
+| `pact lsp` | Start LSP server (stdio, for editor integration) |
 | `pact mcp` | Start MCP tool server (stdio) |
 
 ## Status
 
-PACT is v0.3. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
+PACT is v0.4. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
-What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, module/import system, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact init`, `pact test`, `pact check`, `pact docs`), 412+ tests.
+What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, JWT auth, module/import system, validation constraints, type linter, code formatter, LSP server, built-in MCP server (5 tools), built-in documentation, VS Code extension, CLI (`pact run`, `pact init`, `pact fmt`, `pact test`, `pact check`, `pact lsp`, `pact docs`), 449+ tests.
 
-What's next: LSP for editor support, web playground.
+What's next: web playground, package manager.
 
 ## License
 
