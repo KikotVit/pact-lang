@@ -1101,7 +1101,16 @@ impl Interpreter {
                                 return Ok(current); // guard failed, pass through
                             }
                         }
-                        self.eval_expr(body, &mut step_env)
+                        let result = self.eval_expr(body, &mut step_env)?;
+                        // If body is a `respond` expression (Response struct),
+                        // trigger early return from the route — same as `return respond`.
+                        if let Value::Struct { type_name, .. } = &result {
+                            if type_name == "Response" {
+                                self.pending_return = Some(result);
+                                return Err(self.error("__RETURN__"));
+                            }
+                        }
+                        Ok(result)
                     }
                     _ => Ok(current), // pass through
                 }

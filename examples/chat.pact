@@ -18,10 +18,18 @@ type Member {
   role: String,
 }
 
+intent "get a JWT token (demo login)"
+route POST "/login" {
+  needs auth
+  let token: String = auth.sign({ id: "user-1", name: "Alice", role: "member" })
+  respond 200 with { token: token }
+}
+
 intent "create a new chat room"
 route POST "/rooms" {
   needs db, rng, time, auth
   let user: User = auth.require(request)
+    | on Unauthorized: respond 401 with { error: "Not authenticated" }
   let room: Room = {
     id: rng.uuid(),
     name: request.body.name,
@@ -36,6 +44,7 @@ intent "list all rooms"
 route GET "/rooms" {
   needs db, auth
   auth.require(request)
+    | on Unauthorized: respond 401 with { error: "Not authenticated" }
   db.query("rooms") | respond 200 with .
 }
 
@@ -43,6 +52,7 @@ intent "send a message to a room"
 route POST "/rooms/{room_id}/messages" {
   needs db, rng, time, auth
   let user: User = auth.require(request)
+    | on Unauthorized: respond 401 with { error: "Not authenticated" }
   db.find("members", { room_id: request.params.room_id, user_id: user.id })
     | on NotFound: respond 403 with { error: "Not a member of this room" }
 
@@ -60,6 +70,7 @@ intent "get messages from a room"
 route GET "/rooms/{room_id}/messages" {
   needs db, auth
   let user: User = auth.require(request)
+    | on Unauthorized: respond 401 with { error: "Not authenticated" }
   db.find("members", { room_id: request.params.room_id, user_id: user.id })
     | on NotFound: respond 403 with { error: "Not a member of this room" }
 
@@ -73,6 +84,7 @@ intent "delete own message, or admin/owner can delete any"
 route DELETE "/rooms/{room_id}/messages/{id}" {
   needs db, auth
   let user: User = auth.require(request)
+    | on Unauthorized: respond 401 with { error: "Not authenticated" }
   let member: Member = db.find("members", { room_id: request.params.room_id, user_id: user.id })
     | on NotFound: respond 403 with { error: "Not a member of this room" }
   let msg: Message = db.find("messages", { id: request.params.id })
@@ -88,15 +100,9 @@ intent "stream new messages in real-time via SSE"
 stream GET "/rooms/{room_id}/live" {
   needs db, auth
   auth.require(request)
+    | on Unauthorized: respond 401 with { error: "Not authenticated" }
 
   send db.watch("messages", { room_id: request.params.room_id })
-}
-
-intent "get a JWT token (demo login)"
-route POST "/login" {
-  needs auth
-  let token: String = auth.sign({ id: "user-1", name: "Alice", role: "member" })
-  respond 200 with { token: token }
 }
 
 app Chat { port: 8080, db: "sqlite://chat.db" }
