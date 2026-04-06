@@ -92,9 +92,19 @@ impl Parser {
         if self.at(kind) {
             Ok(self.advance())
         } else {
+            let hint = match kind {
+                TokenKind::LBrace => Some("Blocks and struct literals start with '{'"),
+                TokenKind::RBrace => Some("Did you forget a closing '}'?"),
+                TokenKind::LParen => Some("Function arguments start with '('"),
+                TokenKind::RParen => Some("Did you forget a closing ')'?"),
+                TokenKind::Colon => Some("Types use 'name: Type' syntax"),
+                TokenKind::Assign => Some("Assignment uses '='"),
+                TokenKind::FatArrow => Some("Match arms use '=>' syntax: pattern => body"),
+                _ => None,
+            };
             Err(self.error(
                 &format!("Expected {}, found {}", kind, self.current_kind()),
-                None,
+                hint,
             ))
         }
     }
@@ -107,7 +117,7 @@ impl Parser {
             }
             _ => Err(self.error(
                 &format!("Expected identifier, found {}", self.current_kind()),
-                None,
+                Some("Identifiers are names like: x, myVar, user_name"),
             )),
         }
     }
@@ -984,7 +994,10 @@ impl Parser {
                     self.advance();
                     Ok(String::new())
                 } else {
-                    self.fail("Expected string content for intent", None)
+                    self.fail(
+                        "Expected string content for intent",
+                        Some("Syntax: intent \"description of what this does\""),
+                    )
                 }
             }
             _ => self.fail(
@@ -1149,7 +1162,12 @@ impl Parser {
                 let key_expr = self.parse_string_expr()?;
                 let field_name = match key_expr {
                     Expr::StringLiteral(StringExpr::Simple(s)) => s,
-                    _ => return self.fail("Expected simple string key in struct literal", None),
+                    _ => {
+                        return self.fail(
+                            "Expected simple string key in struct literal",
+                            Some("Struct fields use: { name: value, age: 30 }"),
+                        );
+                    }
                 };
                 self.expect(&TokenKind::Colon)?;
                 let value = self.parse_expression()?;
@@ -1200,7 +1218,10 @@ impl Parser {
 
                 Ok(Expr::StringLiteral(StringExpr::Interpolated(parts)))
             }
-            _ => self.fail("Expected string", None),
+            _ => self.fail(
+                "Expected string",
+                Some("Strings use double quotes: \"text\""),
+            ),
         }
     }
 
@@ -1219,7 +1240,12 @@ impl Parser {
                     parts.push(StringPart::Expr(expr));
                 }
                 TokenKind::StringEnd => break,
-                _ => return self.fail("Unexpected token in string", None),
+                _ => {
+                    return self.fail(
+                        "Unexpected token in string",
+                        Some("String interpolation uses: \"Hello {name}\""),
+                    );
+                }
             }
         }
         Ok(parts)
@@ -2624,5 +2650,34 @@ route GET "/users/{id}" {
         } else {
             panic!("Expected StructLiteral, got {:?}", expr);
         }
+    }
+
+    #[test]
+    fn parse_error_missing_brace_has_hint() {
+        let input = "intent \"test\"\nfn add(a: Int) -> Int";
+        let mut lexer = crate::lexer::Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let err = parser.parse().unwrap_err();
+        // Should mention the missing '{'
+        assert!(
+            err[0].hint.is_some(),
+            "Error should have a hint: {:?}",
+            err[0]
+        );
+    }
+
+    #[test]
+    fn parse_error_missing_paren_has_hint() {
+        let input = "intent \"test\"\nfn add(a: Int -> Int { a }";
+        let mut lexer = crate::lexer::Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens, input);
+        let err = parser.parse().unwrap_err();
+        assert!(
+            err[0].hint.is_some(),
+            "Error should have a hint: {:?}",
+            err[0]
+        );
     }
 }
