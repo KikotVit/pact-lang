@@ -253,6 +253,11 @@ impl<'a> Checker<'a> {
                         .iter()
                         .map(|f| (f.name.clone(), self.resolve_type(&f.type_ann)))
                         .collect();
+                    // Check constraint validity
+                    for field in fields {
+                        let rt = self.resolve_type(&field.type_ann);
+                        self.check_field_constraints(name, field, &rt);
+                    }
                     self.type_defs.insert(
                         name.clone(),
                         TypeDef::Struct {
@@ -461,6 +466,146 @@ impl<'a> Checker<'a> {
             }
             if let Some(sig) = module_fns.get(symbol_name) {
                 self.fn_sigs.insert(symbol_name.clone(), sig.clone());
+            }
+        }
+    }
+
+    fn check_field_constraints(&mut self, type_name: &str, field: &Field, resolved: &ResolvedType) {
+        let is_int = matches!(resolved, ResolvedType::Int);
+        let is_string = matches!(resolved, ResolvedType::String);
+        let mut min_val: Option<i64> = None;
+        let mut max_val: Option<i64> = None;
+        let mut minlen_val: Option<usize> = None;
+        let mut maxlen_val: Option<usize> = None;
+
+        for c in &field.constraints {
+            match c {
+                Constraint::Min(n) => {
+                    if !is_int {
+                        self.diagnostics.push(Diagnostic {
+                            severity: Severity::Warning,
+                            line: 0,
+                            column: 0,
+                            message: format!(
+                                "{}.{}: 'min' constraint on non-Int field",
+                                type_name, field.name
+                            ),
+                            hint: Some("'min' only applies to Int fields".to_string()),
+                            source_line: String::new(),
+                        });
+                    }
+                    min_val = Some(*n);
+                }
+                Constraint::Max(n) => {
+                    if !is_int {
+                        self.diagnostics.push(Diagnostic {
+                            severity: Severity::Warning,
+                            line: 0,
+                            column: 0,
+                            message: format!(
+                                "{}.{}: 'max' constraint on non-Int field",
+                                type_name, field.name
+                            ),
+                            hint: Some("'max' only applies to Int fields".to_string()),
+                            source_line: String::new(),
+                        });
+                    }
+                    max_val = Some(*n);
+                }
+                Constraint::MinLen(n) => {
+                    if !is_string {
+                        self.diagnostics.push(Diagnostic {
+                            severity: Severity::Warning,
+                            line: 0,
+                            column: 0,
+                            message: format!(
+                                "{}.{}: 'minlen' constraint on non-String field",
+                                type_name, field.name
+                            ),
+                            hint: Some("'minlen' only applies to String fields".to_string()),
+                            source_line: String::new(),
+                        });
+                    }
+                    minlen_val = Some(*n);
+                }
+                Constraint::MaxLen(n) => {
+                    if !is_string {
+                        self.diagnostics.push(Diagnostic {
+                            severity: Severity::Warning,
+                            line: 0,
+                            column: 0,
+                            message: format!(
+                                "{}.{}: 'maxlen' constraint on non-String field",
+                                type_name, field.name
+                            ),
+                            hint: Some("'maxlen' only applies to String fields".to_string()),
+                            source_line: String::new(),
+                        });
+                    }
+                    maxlen_val = Some(*n);
+                }
+                Constraint::Format(fmt) => {
+                    if !is_string {
+                        self.diagnostics.push(Diagnostic {
+                            severity: Severity::Warning,
+                            line: 0,
+                            column: 0,
+                            message: format!(
+                                "{}.{}: 'format {}' constraint on non-String field",
+                                type_name, field.name, fmt
+                            ),
+                            hint: Some("'format' only applies to String fields".to_string()),
+                            source_line: String::new(),
+                        });
+                    }
+                }
+                Constraint::Pattern(_) => {
+                    if !is_string {
+                        self.diagnostics.push(Diagnostic {
+                            severity: Severity::Warning,
+                            line: 0,
+                            column: 0,
+                            message: format!(
+                                "{}.{}: 'pattern' constraint on non-String field",
+                                type_name, field.name
+                            ),
+                            hint: Some("'pattern' only applies to String fields".to_string()),
+                            source_line: String::new(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check contradictions
+        if let (Some(min), Some(max)) = (min_val, max_val) {
+            if min > max {
+                self.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    line: 0,
+                    column: 0,
+                    message: format!(
+                        "{}.{}: min ({}) > max ({}), no value can satisfy both",
+                        type_name, field.name, min, max
+                    ),
+                    hint: None,
+                    source_line: String::new(),
+                });
+            }
+        }
+        if let (Some(minl), Some(maxl)) = (minlen_val, maxlen_val) {
+            if minl > maxl {
+                self.diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    line: 0,
+                    column: 0,
+                    message: format!(
+                        "{}.{}: minlen ({}) > maxlen ({}), no value can satisfy both",
+                        type_name, field.name, minl, maxl
+                    ),
+                    hint: None,
+                    source_line: String::new(),
+                });
             }
         }
     }
@@ -1395,5 +1540,41 @@ mod tests {
         assert!(diags[0].message.contains("Parse error"));
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn constraint_min_on_string_warns() {
+        let source = "type Bad { name: String | min 1 }\n";
+        let diags = parse_and_check(source);
+        let warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .collect();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("non-Int"));
+    }
+
+    #[test]
+    fn constraint_min_greater_than_max_warns() {
+        let source = "type Bad { age: Int | min 100 | max 10 }\n";
+        let diags = parse_and_check(source);
+        let warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .collect();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("min (100) > max (10)"));
+    }
+
+    #[test]
+    fn constraint_valid_no_warnings() {
+        let source =
+            "type Good { name: String | minlen 1 | maxlen 100, age: Int | min 0 | max 150 }\n";
+        let diags = parse_and_check(source);
+        let warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .collect();
+        assert!(warnings.is_empty());
     }
 }
