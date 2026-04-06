@@ -28,9 +28,11 @@ impl fmt::Display for Diagnostic {
             Severity::Warning => "Warning",
         };
         writeln!(f, "{} at line {}, col {}:", prefix, self.line, self.column)?;
-        writeln!(f, "  {}", self.source_line)?;
-        let padding = self.column - 1 + 2;
-        writeln!(f, "{:>width$}^", "", width = padding)?;
+        if !self.source_line.is_empty() {
+            writeln!(f, "  {}", self.source_line)?;
+            let padding = self.column.saturating_sub(1) + 2;
+            writeln!(f, "{:>width$}^", "", width = padding)?;
+        }
         write!(f, "  {}", self.message)?;
         if let Some(ref hint) = self.hint {
             write!(f, "\n  Hint: {}", hint)?;
@@ -539,9 +541,21 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn find_field_line(&self, field_name: &str) -> (usize, usize, String) {
+        for (i, line) in self.source.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with(field_name) && trimmed[field_name.len()..].starts_with(':') {
+                let col = line.len() - trimmed.len() + 1;
+                return (i + 1, col, line.to_string());
+            }
+        }
+        (0, 0, String::new())
+    }
+
     fn check_field_constraints(&mut self, type_name: &str, field: &Field, resolved: &ResolvedType) {
         let is_int = matches!(resolved, ResolvedType::Int);
         let is_string = matches!(resolved, ResolvedType::String);
+        let (fline, fcol, fsource) = self.find_field_line(&field.name);
         let mut min_val: Option<i64> = None;
         let mut max_val: Option<i64> = None;
         let mut minlen_val: Option<usize> = None;
@@ -553,14 +567,14 @@ impl<'a> Checker<'a> {
                     if !is_int {
                         self.diagnostics.push(Diagnostic {
                             severity: Severity::Warning,
-                            line: 0,
-                            column: 0,
+                            line: fline,
+                            column: fcol,
                             message: format!(
                                 "{}.{}: 'min' constraint on non-Int field",
                                 type_name, field.name
                             ),
                             hint: Some("'min' only applies to Int fields".to_string()),
-                            source_line: String::new(),
+                            source_line: fsource.clone(),
                         });
                     }
                     min_val = Some(*n);
@@ -569,14 +583,14 @@ impl<'a> Checker<'a> {
                     if !is_int {
                         self.diagnostics.push(Diagnostic {
                             severity: Severity::Warning,
-                            line: 0,
-                            column: 0,
+                            line: fline,
+                            column: fcol,
                             message: format!(
                                 "{}.{}: 'max' constraint on non-Int field",
                                 type_name, field.name
                             ),
                             hint: Some("'max' only applies to Int fields".to_string()),
-                            source_line: String::new(),
+                            source_line: fsource.clone(),
                         });
                     }
                     max_val = Some(*n);
@@ -585,14 +599,14 @@ impl<'a> Checker<'a> {
                     if !is_string {
                         self.diagnostics.push(Diagnostic {
                             severity: Severity::Warning,
-                            line: 0,
-                            column: 0,
+                            line: fline,
+                            column: fcol,
                             message: format!(
                                 "{}.{}: 'minlen' constraint on non-String field",
                                 type_name, field.name
                             ),
                             hint: Some("'minlen' only applies to String fields".to_string()),
-                            source_line: String::new(),
+                            source_line: fsource.clone(),
                         });
                     }
                     minlen_val = Some(*n);
@@ -601,14 +615,14 @@ impl<'a> Checker<'a> {
                     if !is_string {
                         self.diagnostics.push(Diagnostic {
                             severity: Severity::Warning,
-                            line: 0,
-                            column: 0,
+                            line: fline,
+                            column: fcol,
                             message: format!(
                                 "{}.{}: 'maxlen' constraint on non-String field",
                                 type_name, field.name
                             ),
                             hint: Some("'maxlen' only applies to String fields".to_string()),
-                            source_line: String::new(),
+                            source_line: fsource.clone(),
                         });
                     }
                     maxlen_val = Some(*n);
@@ -617,14 +631,14 @@ impl<'a> Checker<'a> {
                     if !is_string {
                         self.diagnostics.push(Diagnostic {
                             severity: Severity::Warning,
-                            line: 0,
-                            column: 0,
+                            line: fline,
+                            column: fcol,
                             message: format!(
                                 "{}.{}: 'format {}' constraint on non-String field",
                                 type_name, field.name, fmt
                             ),
                             hint: Some("'format' only applies to String fields".to_string()),
-                            source_line: String::new(),
+                            source_line: fsource.clone(),
                         });
                     }
                 }
@@ -632,14 +646,14 @@ impl<'a> Checker<'a> {
                     if !is_string {
                         self.diagnostics.push(Diagnostic {
                             severity: Severity::Warning,
-                            line: 0,
-                            column: 0,
+                            line: fline,
+                            column: fcol,
                             message: format!(
                                 "{}.{}: 'pattern' constraint on non-String field",
                                 type_name, field.name
                             ),
                             hint: Some("'pattern' only applies to String fields".to_string()),
-                            source_line: String::new(),
+                            source_line: fsource.clone(),
                         });
                     }
                 }
@@ -651,14 +665,14 @@ impl<'a> Checker<'a> {
             if min > max {
                 self.diagnostics.push(Diagnostic {
                     severity: Severity::Warning,
-                    line: 0,
-                    column: 0,
+                    line: fline,
+                    column: fcol,
                     message: format!(
                         "{}.{}: min ({}) > max ({}), no value can satisfy both",
                         type_name, field.name, min, max
                     ),
                     hint: None,
-                    source_line: String::new(),
+                    source_line: fsource.clone(),
                 });
             }
         }
@@ -666,14 +680,14 @@ impl<'a> Checker<'a> {
             if minl > maxl {
                 self.diagnostics.push(Diagnostic {
                     severity: Severity::Warning,
-                    line: 0,
-                    column: 0,
+                    line: fline,
+                    column: fcol,
                     message: format!(
                         "{}.{}: minlen ({}) > maxlen ({}), no value can satisfy both",
                         type_name, field.name, minl, maxl
                     ),
                     hint: None,
-                    source_line: String::new(),
+                    source_line: fsource.clone(),
                 });
             }
         }
