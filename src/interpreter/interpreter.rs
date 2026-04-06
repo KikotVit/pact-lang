@@ -1441,6 +1441,7 @@ impl Interpreter {
             }
             "auth.require" => self.builtin_auth_require(args),
             "auth.sign" => self.builtin_auth_sign(args),
+            "auth.verify" => self.builtin_auth_verify(args),
             "auth.mock" => {
                 // For testing: returns the provided user struct as-is
                 Ok(args.into_iter().next().unwrap_or(Value::Nothing))
@@ -1909,15 +1910,17 @@ impl Interpreter {
 
                 let claims = match json_payload {
                     serde_json::Value::Object(mut m) => {
-                        // Add exp claim (1 hour from now) if not present
-                        if !m.contains_key("exp") {
-                            let exp = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs()
-                                + 3600;
-                            m.insert("exp".to_string(), serde_json::json!(exp));
-                        }
+                        // exp is relative seconds from now (e.g. 900 = 15 min)
+                        // Default: 3600 (1 hour)
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs();
+                        let duration = match m.get("exp") {
+                            Some(serde_json::Value::Number(n)) => n.as_u64().unwrap_or(3600),
+                            _ => 3600,
+                        };
+                        m.insert("exp".to_string(), serde_json::json!(now + duration));
                         serde_json::Value::Object(m)
                     }
                     _ => return Err(self.error("auth.sign payload must be a struct")),
@@ -1932,6 +1935,55 @@ impl Interpreter {
             None => {
                 // No JWT_SECRET — dev mode, return a mock token
                 Ok(Value::String("dev-token-mock".to_string()))
+            }
+        }
+    }
+
+    fn builtin_auth_verify(&self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let token = match args.first() {
+            Some(Value::String(t)) => t.clone(),
+            _ => return Err(self.error("auth.verify expects a String token")),
+        };
+
+        match &self.jwt_secret {
+            Some(secret) => {
+                use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+                let key = DecodingKey::from_secret(secret.as_bytes());
+                let mut validation = Validation::new(Algorithm::HS256);
+                validation.required_spec_claims.clear();
+
+                match decode::<serde_json::Value>(&token, &key, &validation) {
+                    Ok(token_data) => {
+                        Ok(crate::interpreter::json::json_to_value(&token_data.claims))
+                    }
+                    Err(e) => {
+                        let msg = match e.kind() {
+                            jsonwebtoken::errors::ErrorKind::ExpiredSignature => "Token expired",
+                            jsonwebtoken::errors::ErrorKind::InvalidSignature => {
+                                "Invalid signature"
+                            }
+                            _ => "Invalid token",
+                        };
+                        Ok(Value::Error {
+                            variant: "Unauthorized".to_string(),
+                            fields: Some({
+                                let mut f = HashMap::new();
+                                f.insert("message".to_string(), Value::String(msg.to_string()));
+                                f
+                            }),
+                        })
+                    }
+                }
+            }
+            None => {
+                // Dev mode — return mock claims
+                let mut f = HashMap::new();
+                f.insert("id".to_string(), Value::String("user-1".to_string()));
+                f.insert("role".to_string(), Value::String("Admin".to_string()));
+                Ok(Value::Struct {
+                    type_name: "Claims".to_string(),
+                    fields: f,
+                })
             }
         }
     }
@@ -2139,6 +2191,12 @@ impl Interpreter {
             "sign".to_string(),
             Value::BuiltinFn {
                 name: "auth.sign".to_string(),
+            },
+        );
+        auth_methods.insert(
+            "verify".to_string(),
+            Value::BuiltinFn {
+                name: "auth.verify".to_string(),
             },
         );
         self.global.bind(

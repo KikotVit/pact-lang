@@ -18,11 +18,25 @@ type Member {
   role: String,
 }
 
-intent "get a JWT token (demo login)"
+intent "login and get access + refresh tokens"
 route POST "/login" {
   needs auth
-  let token: String = auth.sign({ id: "user-1", name: "Alice", role: "member" })
-  respond 200 with { token: token }
+  let access: String = auth.sign({ id: "user-1", name: "Alice", role: "member", kind: "access", exp: 900 })
+  let refresh: String = auth.sign({ id: "user-1", role: "member", kind: "refresh", exp: 604800 })
+  respond 200 with { access: access, refresh: refresh }
+}
+
+intent "refresh access token using refresh token"
+route POST "/refresh" {
+  needs auth
+  let claims: Struct = auth.verify(request.body.refresh_token)
+    | on Unauthorized: respond 401 with { error: "Invalid refresh token" }
+
+  return respond 401 with { error: "Not a refresh token" }
+    if claims.kind != "refresh"
+
+  let access: String = auth.sign({ id: claims.id, role: claims.role, exp: 900 })
+  respond 200 with { access: access }
 }
 
 intent "create a new chat room"
