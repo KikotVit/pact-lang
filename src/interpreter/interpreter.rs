@@ -2731,20 +2731,13 @@ impl Interpreter {
         Ok(result)
     }
 
-    /// Get the raw SQLite file path (stripped of sqlite:// prefix), resolved relative to base_dir.
+    /// Get the raw SQLite file path (stripped of sqlite:// prefix).
+    /// Must match the path used by open_sqlite() in main.rs.
     pub fn get_db_path(&self) -> Option<String> {
         self.app_config
             .as_ref()
             .and_then(|c| c.2.as_ref())
-            .map(|url| {
-                let raw = url.strip_prefix("sqlite://").unwrap_or(url);
-                if let Some(ref base) = self.base_dir {
-                    if let Some(parent) = std::path::Path::new(base).parent() {
-                        return parent.join(raw).to_string_lossy().to_string();
-                    }
-                }
-                raw.to_string()
-            })
+            .map(|url| url.strip_prefix("sqlite://").unwrap_or(url).to_string())
     }
 
     // --- Test runner ---

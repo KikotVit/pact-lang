@@ -93,7 +93,15 @@ impl io::Read for SseReader {
 }
 
 fn format_sse_event(id: i64, data: &str) -> Vec<u8> {
-    format!("id: {}\ndata: {}\n\n", id, data).into_bytes()
+    let event = format!("id: {}\ndata: {}\n\n", id, data);
+    // Pad with SSE comment to flush tiny_http's internal BufWriter (~8KB).
+    // SSE comments (lines starting with ':') are ignored by EventSource clients.
+    let padding_needed = 8192_usize.saturating_sub(event.len());
+    if padding_needed > 0 {
+        format!("{}:{}\n", event, " ".repeat(padding_needed)).into_bytes()
+    } else {
+        event.into_bytes()
+    }
 }
 
 fn handle_sse(
@@ -138,7 +146,11 @@ fn handle_sse(
     });
 
     // Send SSE response — blocks until channel closes (client disconnect)
-    let sse_reader = SseReader::new(rx);
+    // Pre-seed with a large SSE comment to flush tiny_http's ~8KB BufWriter.
+    // SSE comments (lines starting with ':') are ignored by EventSource clients.
+    let mut sse_reader = SseReader::new(rx);
+    let padding = format!(": {}\n\n", " ".repeat(8192));
+    sse_reader.buffer = padding.into_bytes();
     let mut headers = vec![
         Header::from_bytes("Content-Type", "text/event-stream").unwrap(),
         Header::from_bytes("Cache-Control", "no-cache").unwrap(),
@@ -529,7 +541,9 @@ mod tests {
         let s = String::from_utf8(event).unwrap();
         assert!(s.contains("id: 42\n"));
         assert!(s.contains("data: {\"msg\":\"hello\"}\n"));
-        assert!(s.ends_with("\n\n"));
+        // Event is padded with SSE comment to flush tiny_http buffer
+        assert!(s.len() >= 8192);
+        assert!(s.contains(":"));
     }
 
     #[test]
