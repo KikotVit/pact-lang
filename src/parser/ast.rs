@@ -87,6 +87,17 @@ pub enum TypeDecl {
 pub struct Field {
     pub name: String,
     pub type_ann: TypeExpr,
+    pub constraints: Vec<Constraint>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Constraint {
+    Min(i64),
+    Max(i64),
+    MinLen(usize),
+    MaxLen(usize),
+    Format(String),
+    Pattern(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

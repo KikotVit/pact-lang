@@ -122,6 +122,32 @@ impl Parser {
         }
     }
 
+    fn expect_int(&mut self) -> Result<i64, ParseError> {
+        match self.current_kind().clone() {
+            TokenKind::IntLiteral(n) => {
+                self.advance();
+                Ok(n)
+            }
+            _ => Err(self.error(
+                &format!("Expected integer, found {}", self.current_kind()),
+                None,
+            )),
+        }
+    }
+
+    fn expect_string_literal(&mut self) -> Result<String, ParseError> {
+        match self.current_kind().clone() {
+            TokenKind::RawStringLiteral(s) => {
+                self.advance();
+                Ok(s)
+            }
+            _ => Err(self.error(
+                &format!("Expected string, found {}", self.current_kind()),
+                None,
+            )),
+        }
+    }
+
     fn skip_newlines(&mut self) {
         while self.at(&TokenKind::Newline) {
             self.advance();
@@ -781,6 +807,58 @@ impl Parser {
         }
     }
 
+    fn is_constraint_keyword(&self) -> bool {
+        if let TokenKind::Identifier(s) = self.peek_at(1) {
+            matches!(
+                s.as_str(),
+                "min" | "max" | "minlen" | "maxlen" | "format" | "pattern"
+            )
+        } else {
+            false
+        }
+    }
+
+    fn parse_field_constraints(&mut self) -> Result<Vec<Constraint>, ParseError> {
+        let mut constraints = Vec::new();
+        while self.at(&TokenKind::Pipe) && self.is_constraint_keyword() {
+            self.advance(); // consume |
+            let kw = self.expect_identifier()?;
+            match kw.as_str() {
+                "min" => {
+                    let n = self.expect_int()?;
+                    constraints.push(Constraint::Min(n));
+                }
+                "max" => {
+                    let n = self.expect_int()?;
+                    constraints.push(Constraint::Max(n));
+                }
+                "minlen" => {
+                    let n = self.expect_int()?;
+                    constraints.push(Constraint::MinLen(n as usize));
+                }
+                "maxlen" => {
+                    let n = self.expect_int()?;
+                    constraints.push(Constraint::MaxLen(n as usize));
+                }
+                "format" => {
+                    let f = self.expect_identifier()?;
+                    constraints.push(Constraint::Format(f));
+                }
+                "pattern" => {
+                    let s = self.expect_string_literal()?;
+                    constraints.push(Constraint::Pattern(s));
+                }
+                _ => {
+                    return Err(self.error(
+                        &format!("Unknown constraint '{}'", kw),
+                        Some("Valid constraints: min, max, minlen, maxlen, format, pattern"),
+                    ));
+                }
+            }
+        }
+        Ok(constraints)
+    }
+
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         let stmt = match self.current_kind() {
             TokenKind::Let => self.parse_let_or_var(false)?,
@@ -1076,9 +1154,11 @@ impl Parser {
                 let field_name = self.expect_identifier()?;
                 self.expect(&TokenKind::Colon)?;
                 let type_ann = self.parse_type_expr()?;
+                let constraints = self.parse_field_constraints()?;
                 fields.push(Field {
                     name: field_name,
                     type_ann,
+                    constraints,
                 });
                 self.eat(&TokenKind::Comma);
                 self.skip_newlines();
@@ -1117,9 +1197,11 @@ impl Parser {
                 let field_name = self.expect_identifier()?;
                 self.expect(&TokenKind::Colon)?;
                 let type_ann = self.parse_type_expr()?;
+                let constraints = self.parse_field_constraints()?;
                 fs.push(Field {
                     name: field_name,
                     type_ann,
+                    constraints,
                 });
                 self.eat(&TokenKind::Comma);
                 self.skip_newlines();
@@ -2803,5 +2885,48 @@ stream GET "/live" {
         let err = parser.parse().unwrap_err();
         assert!(err[0].message.contains("intent"));
         assert!(err[0].hint.is_some());
+    }
+
+    #[test]
+    fn parse_field_constraints() {
+        let input = r#"type NewUser {
+  name: String | minlen 1 | maxlen 100,
+  email: String | format email,
+  age: Int | min 0 | max 150,
+}
+"#;
+        let program = parse_program(input);
+        if let Statement::TypeDecl(TypeDecl::Struct { fields, .. }) = &program.statements[0] {
+            assert_eq!(fields[0].name, "name");
+            assert_eq!(fields[0].constraints.len(), 2);
+            assert_eq!(fields[0].constraints[0], Constraint::MinLen(1));
+            assert_eq!(fields[0].constraints[1], Constraint::MaxLen(100));
+
+            assert_eq!(fields[1].name, "email");
+            assert_eq!(fields[1].constraints.len(), 1);
+            assert_eq!(
+                fields[1].constraints[0],
+                Constraint::Format("email".to_string())
+            );
+
+            assert_eq!(fields[2].name, "age");
+            assert_eq!(fields[2].constraints.len(), 2);
+            assert_eq!(fields[2].constraints[0], Constraint::Min(0));
+            assert_eq!(fields[2].constraints[1], Constraint::Max(150));
+        } else {
+            panic!("Expected TypeDecl::Struct");
+        }
+    }
+
+    #[test]
+    fn parse_field_no_constraints() {
+        let input = "type User { id: String, name: String }\n";
+        let program = parse_program(input);
+        if let Statement::TypeDecl(TypeDecl::Struct { fields, .. }) = &program.statements[0] {
+            assert!(fields[0].constraints.is_empty());
+            assert!(fields[1].constraints.is_empty());
+        } else {
+            panic!("Expected TypeDecl::Struct");
+        }
     }
 }
