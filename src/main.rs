@@ -117,6 +117,20 @@ fn main() {
             "my-app".to_string()
         };
 
+        // Validate project name
+        if name.is_empty()
+            || name.contains(' ')
+            || name.contains('/')
+            || name.contains('\\')
+            || name.starts_with('.')
+        {
+            eprintln!(
+                "Invalid project name '{}'. Use lowercase letters, numbers, and hyphens (e.g. 'my-app')",
+                name
+            );
+            process::exit(1);
+        }
+
         // Capitalize first letter for app name
         let app_name: String = name
             .split('-')

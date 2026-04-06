@@ -363,7 +363,15 @@ impl Interpreter {
                     Value::Effect { methods, .. } => methods.get(field).cloned().ok_or_else(|| {
                         let available: Vec<String> = methods.keys().cloned().collect();
                         let mut err = self.error(&format!("Effect has no method '{}'", field));
-                        err.hint = Some(format!("Available methods: {}", available.join(", ")));
+                        if let Some(s) = suggest(field, &available) {
+                            err.hint = Some(format!(
+                                "Did you mean '{}'? Available methods: {}",
+                                s,
+                                available.join(", ")
+                            ));
+                        } else {
+                            err.hint = Some(format!("Available methods: {}", available.join(", ")));
+                        }
                         err
                     }),
                     Value::String(_) => {
@@ -1203,6 +1211,7 @@ impl Interpreter {
                     _ => Err(self.error("String.replace() expects two String arguments")),
                 },
                 _ => {
+                    // Keep in sync with match arms above
                     let string_methods: Vec<String> = vec![
                         "length",
                         "contains",
@@ -1269,6 +1278,7 @@ impl Interpreter {
                     Ok(Value::List(rev))
                 }
                 _ => {
+                    // Keep in sync with match arms above
                     let list_methods: Vec<String> = vec![
                         "length", "contains", "push", "get", "join", "is_empty", "first", "last",
                         "reverse",

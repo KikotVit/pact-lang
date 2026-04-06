@@ -245,6 +245,7 @@ pact test users.pact
 | Command | What it does |
 |---------|-------------|
 | `pact run file.pact` | Run a program (starts HTTP server if app is declared) |
+| `pact init [name]` | Create a new project (default: `my-app`) |
 | `pact test file.pact` | Run test blocks |
 | `pact check file.pact` | Validate syntax and check types |
 | `pact docs` | List all documentation topics |
@@ -255,7 +256,7 @@ pact test users.pact
 
 PACT is v0.3. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
-What exists: lexer, parser, tree-walking interpreter, HTTP server, SQLite storage, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact test`, `pact check`, `pact docs`), 379+ tests.
+What exists: lexer, parser, tree-walking interpreter, HTTP server, SQLite storage, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact init`, `pact test`, `pact check`, `pact docs`), 395+ tests.
 
 What's next: HTTP client (`http` effect for calling external APIs), import/module system, authentication, LSP for editor support.
 

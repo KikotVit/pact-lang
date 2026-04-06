@@ -819,12 +819,18 @@ impl Parser {
             }
             _ => {
                 let expr = self.parse_expression()?;
-                // Detect `x = value` — PACT doesn't have standalone assignment
+                // Detect `x = value` or `x.field = value` — PACT doesn't have standalone assignment
                 if self.at(&TokenKind::Assign) {
                     if let Expr::Identifier(name) = &expr {
                         return Err(self.error(
                             &format!("Unexpected '=' after '{}'. PACT variables are immutable by default", name),
                             Some("Declare variables with: let name: Type = value"),
+                        ));
+                    }
+                    if matches!(&expr, Expr::FieldAccess { .. }) {
+                        return Err(self.error(
+                            "PACT structs are immutable. Field assignment is not supported",
+                            Some("Create a new struct with the updated field: { ...old, field: new_value }"),
                         ));
                     }
                 }
