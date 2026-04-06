@@ -819,6 +819,15 @@ impl Parser {
             }
             _ => {
                 let expr = self.parse_expression()?;
+                // Detect `x = value` — PACT doesn't have standalone assignment
+                if self.at(&TokenKind::Assign) {
+                    if let Expr::Identifier(name) = &expr {
+                        return Err(self.error(
+                            &format!("Unexpected '=' after '{}'. PACT variables are immutable by default", name),
+                            Some("Declare variables with: let name: Type = value"),
+                        ));
+                    }
+                }
                 Statement::Expression(expr)
             }
         };
