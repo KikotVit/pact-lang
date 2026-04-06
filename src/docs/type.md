@@ -40,6 +40,31 @@ let user: Struct = {
 }
 ```
 
+## Validation constraints
+
+Add constraints to struct fields with `|` syntax:
+
+```pact
+type NewUser {
+  name: String | minlen 1 | maxlen 100,
+  email: String | format email,
+  age: Int | min 0 | max 150,
+}
+```
+
+Constraints are enforced with `| validate as Type`:
+
+```pact
+request.body | validate as NewUser
+  | on ValidationError: respond 400 with { error: .message }
+```
+
+Available constraints:
+- `min N` / `max N` — Int range
+- `minlen N` / `maxlen N` — String length
+- `format email` / `format url` / `format uuid` — String format
+- `pattern "..."` — String contains pattern
+
 ## Spread syntax
 
 Copy fields from another struct and override specific ones:

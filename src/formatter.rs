@@ -287,10 +287,12 @@ impl Formatter {
                 self.writeln(&format!("type {} {{", name));
                 self.indent += 1;
                 for field in fields {
+                    let constraints_str = self.format_constraints(&field.constraints);
                     self.writeln(&format!(
-                        "{}: {},",
+                        "{}: {}{},",
                         field.name,
                         self.format_type_expr(&field.type_ann),
+                        constraints_str,
                     ));
                 }
                 self.indent -= 1;
@@ -314,6 +316,24 @@ impl Formatter {
         } else {
             variant.name.clone()
         }
+    }
+
+    fn format_constraints(&self, constraints: &[Constraint]) -> String {
+        if constraints.is_empty() {
+            return String::new();
+        }
+        let parts: Vec<String> = constraints
+            .iter()
+            .map(|c| match c {
+                Constraint::Min(n) => format!("min {}", n),
+                Constraint::Max(n) => format!("max {}", n),
+                Constraint::MinLen(n) => format!("minlen {}", n),
+                Constraint::MaxLen(n) => format!("maxlen {}", n),
+                Constraint::Format(f) => format!("format {}", f),
+                Constraint::Pattern(p) => format!("pattern \"{}\"", p),
+            })
+            .collect();
+        format!(" | {}", parts.join(" | "))
     }
 
     fn format_type_expr(&self, te: &TypeExpr) -> String {
@@ -847,5 +867,14 @@ stream GET "/live" {
         assert!(output.contains("match x {"));
         assert!(output.contains("  1 => \"one\""));
         assert!(output.contains("  _ => \"other\""));
+    }
+
+    #[test]
+    fn format_type_with_constraints() {
+        let input =
+            "type NewUser { name: String | minlen 1 | maxlen 100, age: Int | min 0 | max 150 }\n";
+        let output = fmt(input);
+        assert!(output.contains("name: String | minlen 1 | maxlen 100,"));
+        assert!(output.contains("age: Int | min 0 | max 150,"));
     }
 }
