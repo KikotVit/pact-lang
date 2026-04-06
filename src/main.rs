@@ -24,6 +24,7 @@ fn main() {
         println!(
             "  pact run <file.pact>       Run a .pact program (starts HTTP server if app is declared)"
         );
+        println!("  pact init [name]           Create a new PACT project");
         println!("  pact check <file.pact>     Check syntax and types");
         println!("  pact test <file.pact>      Run test blocks");
         println!("  pact docs [topic]          Show language documentation");
@@ -105,6 +106,61 @@ fn main() {
     // pact mcp
     if args.len() >= 2 && args[1] == "mcp" {
         pact::mcp::run_mcp_server();
+        return;
+    }
+
+    // pact init [name]
+    if args.len() >= 2 && args[1] == "init" {
+        let name = if args.len() >= 3 {
+            args[2].clone()
+        } else {
+            "my-app".to_string()
+        };
+
+        // Capitalize first letter for app name
+        let app_name: String = name
+            .split('-')
+            .map(|s| {
+                let mut c = s.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().to_string() + c.as_str(),
+                }
+            })
+            .collect();
+
+        let main_pact = format!(
+            r#"intent "say hello"
+route GET "/hello" {{
+  respond 200 with {{ message: "Hello from PACT!" }}
+}}
+
+app {} {{ port: 8080 }}
+"#,
+            app_name
+        );
+
+        let dir = std::path::Path::new(&name);
+        if dir.exists() {
+            eprintln!("Directory '{}' already exists", name);
+            process::exit(1);
+        }
+
+        if let Err(e) = fs::create_dir(&name) {
+            eprintln!("Cannot create directory '{}': {}", name, e);
+            process::exit(1);
+        }
+
+        let file_path = dir.join("main.pact");
+        if let Err(e) = fs::write(&file_path, &main_pact) {
+            eprintln!("Cannot write '{}': {}", file_path.display(), e);
+            process::exit(1);
+        }
+
+        println!("Created {}/main.pact", name);
+        println!();
+        println!("  cd {}", name);
+        println!("  pact run main.pact");
         return;
     }
 
