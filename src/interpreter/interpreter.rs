@@ -120,8 +120,22 @@ impl Interpreter {
     }
 
     /// Load JWT secret from JWT_SECRET environment variable.
+    /// Validates minimum length for security.
     pub fn load_jwt_secret(&mut self) {
-        self.jwt_secret = std::env::var("JWT_SECRET").ok();
+        match std::env::var("JWT_SECRET") {
+            Ok(secret) => {
+                if secret.len() < 32 {
+                    eprintln!(
+                        "Warning: JWT_SECRET is too short ({} chars). Use at least 32 characters for security.",
+                        secret.len()
+                    );
+                }
+                self.jwt_secret = Some(secret);
+            }
+            Err(_) => {
+                self.jwt_secret = None;
+            }
+        }
     }
 
     pub fn open_sqlite(&mut self, url: &str) -> Result<(), RuntimeError> {

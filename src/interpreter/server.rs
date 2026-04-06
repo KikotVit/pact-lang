@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 use tiny_http::{Header, Response, Server, StatusCode};
@@ -11,6 +11,35 @@ use crate::interpreter::Interpreter;
 use crate::interpreter::db::sse_query_new_rows;
 use crate::interpreter::json::{json_to_value, value_to_json};
 use crate::interpreter::value::Value;
+
+// ── Rate limiting ──────────────────────────────────────────────────
+
+const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
+const RATE_LIMIT_MAX: u32 = 60; // 60 requests per minute per IP
+
+struct RateLimiter {
+    clients: HashMap<String, (u32, Instant)>,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        RateLimiter {
+            clients: HashMap::new(),
+        }
+    }
+
+    fn check(&mut self, ip: &str) -> bool {
+        let now = Instant::now();
+        let entry = self.clients.entry(ip.to_string()).or_insert((0, now));
+        if now.duration_since(entry.1) > RATE_LIMIT_WINDOW {
+            *entry = (1, now);
+            true
+        } else {
+            entry.0 += 1;
+            entry.0 <= RATE_LIMIT_MAX
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 enum PathSegment {
@@ -164,8 +193,16 @@ fn handle_sse(
 
 // ── CORS ───────────────────────────────────────────────────────────
 
+/// Add CORS headers. Controlled via CORS_ORIGIN env var:
+/// - Not set or "*" → allow all origins (dev mode)
+/// - "none" → no CORS headers at all (disable CORS)
+/// - "https://myapp.com" → allow only that origin
 fn add_cors_headers(headers: &mut Vec<Header>) {
-    headers.push(Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap());
+    let origin = std::env::var("CORS_ORIGIN").unwrap_or_else(|_| "*".to_string());
+    if origin == "none" {
+        return;
+    }
+    headers.push(Header::from_bytes("Access-Control-Allow-Origin", origin.as_str()).unwrap());
     headers.push(
         Header::from_bytes(
             "Access-Control-Allow-Headers",
@@ -212,8 +249,22 @@ pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
         .collect();
 
     let db_path = interpreter.get_db_path();
+    let mut rate_limiter = RateLimiter::new();
 
     for mut request in server.incoming_requests() {
+        // Rate limiting
+        let peer_ip = request
+            .remote_addr()
+            .map(|a| a.ip().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        if !rate_limiter.check(&peer_ip) {
+            let _ = request.respond(make_json_response(
+                429,
+                r#"{"error":"Too many requests. Try again later."}"#,
+            ));
+            continue;
+        }
+
         let method = request.method().to_string().to_uppercase();
         let url = request.url().to_string();
         let path = url.split('?').next().unwrap_or(&url);

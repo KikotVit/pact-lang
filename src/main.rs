@@ -346,6 +346,25 @@ app {} {{ port: 8080 }}
                         }
                         println!("Database: {} (WAL mode)", url);
                     }
+                    if interp.jwt_secret.is_none() {
+                        let has_auth_routes = interp
+                            .routes
+                            .iter()
+                            .any(|r| r.effects.contains(&"auth".to_string()))
+                            || interp
+                                .streams
+                                .iter()
+                                .any(|s| s.effects.contains(&"auth".to_string()));
+                        if has_auth_routes {
+                            eprintln!(
+                                "Warning: routes use 'auth' but JWT_SECRET is not set. Running in dev mode (any token accepted)."
+                            );
+                            eprintln!(
+                                "  Set JWT_SECRET for production: JWT_SECRET=<32+ chars> pact run {}",
+                                filename
+                            );
+                        }
+                    }
                     pact::interpreter::server::start_server(&mut interp, &name, port);
                 } else {
                     match value {
