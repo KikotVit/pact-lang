@@ -46,7 +46,7 @@ pub struct Interpreter {
     pending_return: Option<Value>,
     pub base_dir: Option<PathBuf>,
     pub module_cache: HashMap<PathBuf, Environment>,
-    pub type_defs: HashMap<String, Vec<(String, bool)>>, // (field_name, is_optional)
+    pub type_defs: HashMap<String, Vec<(String, bool, Vec<crate::parser::ast::Constraint>)>>,
     pub routes: Vec<StoredRoute>,
     pub streams: Vec<StoredStream>,
     pub app_config: Option<(String, u16, Option<String>)>,
@@ -93,6 +93,90 @@ fn suggest<'a>(input: &str, candidates: &'a [String]) -> Option<&'a str> {
         .filter(|(_, d)| *d <= 2 && *d > 0)
         .min_by_key(|(_, d)| *d)
         .map(|(name, _)| name)
+}
+
+fn validate_constraint(
+    field_name: &str,
+    value: &Value,
+    constraints: &[crate::parser::ast::Constraint],
+) -> Option<String> {
+    use crate::parser::ast::Constraint;
+    for c in constraints {
+        match c {
+            Constraint::Min(n) => {
+                if let Value::Int(v) = value {
+                    if *v < *n {
+                        return Some(format!(
+                            "'{}' must be at least {} (got {})",
+                            field_name, n, v
+                        ));
+                    }
+                }
+            }
+            Constraint::Max(n) => {
+                if let Value::Int(v) = value {
+                    if *v > *n {
+                        return Some(format!(
+                            "'{}' must be at most {} (got {})",
+                            field_name, n, v
+                        ));
+                    }
+                }
+            }
+            Constraint::MinLen(n) => {
+                if let Value::String(s) = value {
+                    if s.len() < *n {
+                        return Some(format!(
+                            "'{}' must be at least {} characters (got {})",
+                            field_name,
+                            n,
+                            s.len()
+                        ));
+                    }
+                }
+            }
+            Constraint::MaxLen(n) => {
+                if let Value::String(s) = value {
+                    if s.len() > *n {
+                        return Some(format!(
+                            "'{}' must be at most {} characters (got {})",
+                            field_name,
+                            n,
+                            s.len()
+                        ));
+                    }
+                }
+            }
+            Constraint::Format(fmt) => {
+                if let Value::String(s) = value {
+                    let valid = match fmt.as_str() {
+                        "email" => s.contains('@') && s.contains('.') && s.len() >= 3,
+                        "url" => s.starts_with("http://") || s.starts_with("https://"),
+                        "uuid" => s.len() == 36 && s.chars().filter(|c| *c == '-').count() == 4,
+                        _ => true,
+                    };
+                    if !valid {
+                        return Some(format!(
+                            "'{}' does not match format '{}' (got \"{}\")",
+                            field_name, fmt, s
+                        ));
+                    }
+                }
+            }
+            Constraint::Pattern(pat) => {
+                if let Value::String(s) = value {
+                    // Simple pattern matching — check if pattern appears in string
+                    if !s.contains(pat.as_str()) {
+                        return Some(format!(
+                            "'{}' does not match pattern '{}' (got \"{}\")",
+                            field_name, pat, s
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 impl Interpreter {
@@ -194,14 +278,15 @@ impl Interpreter {
             }
             Statement::TypeDecl(decl) => {
                 if let crate::parser::ast::TypeDecl::Struct { name, fields } = decl {
-                    let field_info: Vec<(String, bool)> = fields
-                        .iter()
-                        .map(|f| {
-                            let optional =
-                                matches!(f.type_ann, crate::parser::ast::TypeExpr::Optional(_));
-                            (f.name.clone(), optional)
-                        })
-                        .collect();
+                    let field_info: Vec<(String, bool, Vec<crate::parser::ast::Constraint>)> =
+                        fields
+                            .iter()
+                            .map(|f| {
+                                let optional =
+                                    matches!(f.type_ann, crate::parser::ast::TypeExpr::Optional(_));
+                                (f.name.clone(), optional, f.constraints.clone())
+                            })
+                            .collect();
                     self.type_defs.insert(name.clone(), field_info);
                 }
                 Ok(StmtResult::Value(Value::Nothing))
@@ -1136,18 +1221,13 @@ impl Interpreter {
                             // Check missing required (non-optional) fields
                             let missing: Vec<&str> = type_fields
                                 .iter()
-                                .filter(|(name, optional)| !optional && !fields.contains_key(name))
-                                .map(|(name, _)| name.as_str())
-                                .collect();
-                            // Check unknown fields
-                            let known: Vec<&str> =
-                                type_fields.iter().map(|(n, _)| n.as_str()).collect();
-                            let unknown: Vec<&String> = fields
-                                .keys()
-                                .filter(|k| !known.contains(&k.as_str()))
+                                .filter(|(name, optional, _)| {
+                                    !optional && !fields.contains_key(name)
+                                })
+                                .map(|(name, _, _)| name.as_str())
                                 .collect();
                             if !missing.is_empty() {
-                                Ok(Value::Error {
+                                return Ok(Value::Error {
                                     variant: "ValidationError".to_string(),
                                     fields: Some({
                                         let mut m = HashMap::new();
@@ -1160,9 +1240,17 @@ impl Interpreter {
                                         );
                                         m
                                     }),
-                                })
-                            } else if !unknown.is_empty() {
-                                Ok(Value::Error {
+                                });
+                            }
+                            // Check unknown fields
+                            let known: Vec<&str> =
+                                type_fields.iter().map(|(n, _, _)| n.as_str()).collect();
+                            let unknown: Vec<&String> = fields
+                                .keys()
+                                .filter(|k| !known.contains(&k.as_str()))
+                                .collect();
+                            if !unknown.is_empty() {
+                                return Ok(Value::Error {
                                     variant: "ValidationError".to_string(),
                                     fields: Some({
                                         let mut m = HashMap::new();
@@ -1179,10 +1267,30 @@ impl Interpreter {
                                         );
                                         m
                                     }),
-                                })
-                            } else {
-                                Ok(current)
+                                });
                             }
+                            // Validate constraints
+                            for (fname, _, constraints) in &type_fields {
+                                if let Some(value) = fields.get(fname) {
+                                    if let Some(err) =
+                                        validate_constraint(fname, value, constraints)
+                                    {
+                                        return Ok(Value::Error {
+                                            variant: "ValidationError".to_string(),
+                                            fields: Some({
+                                                let mut m = HashMap::new();
+                                                m.insert("message".to_string(), Value::String(err));
+                                                m.insert(
+                                                    "field".to_string(),
+                                                    Value::String(fname.clone()),
+                                                );
+                                                m
+                                            }),
+                                        });
+                                    }
+                                }
+                            }
+                            Ok(current)
                         }
                         _ => Ok(Value::Error {
                             variant: "ValidationError".to_string(),
@@ -4721,5 +4829,88 @@ stream GET "/events" {
     fn test_auth_sign_no_secret_returns_mock_token() {
         let result = eval_with_effects(r#"auth.sign({ id: "user-1" })"#);
         assert_eq!(result, Value::String("dev-token-mock".to_string()));
+    }
+
+    #[test]
+    fn validate_as_enforces_min_constraint() {
+        let input = r#"
+type Item { age: Int | min 0 | max 150 }
+let x: Struct = { age: -5 } | validate as Item
+x
+"#;
+        let result = eval(input);
+        if let Value::Error { variant, fields } = result {
+            assert_eq!(variant, "ValidationError");
+            let msg = fields.unwrap().get("message").unwrap().clone();
+            assert!(format!("{}", msg).contains("at least 0"));
+        } else {
+            panic!("Expected ValidationError, got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn validate_as_enforces_max_constraint() {
+        let input = r#"
+type Item { age: Int | min 0 | max 150 }
+let x: Struct = { age: 200 } | validate as Item
+x
+"#;
+        let result = eval(input);
+        if let Value::Error { variant, .. } = result {
+            assert_eq!(variant, "ValidationError");
+        } else {
+            panic!("Expected ValidationError, got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn validate_as_enforces_minlen_constraint() {
+        let input = r#"
+type User { name: String | minlen 1 }
+let x: Struct = { name: "" } | validate as User
+x
+"#;
+        let result = eval(input);
+        if let Value::Error { variant, fields } = result {
+            assert_eq!(variant, "ValidationError");
+            let msg = format!("{}", fields.unwrap().get("message").unwrap());
+            assert!(msg.contains("at least 1 characters"));
+        } else {
+            panic!("Expected ValidationError, got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn validate_as_enforces_format_email() {
+        let input = r#"
+type Contact { email: String | format email }
+let x: Struct = { email: "not-an-email" } | validate as Contact
+x
+"#;
+        let result = eval(input);
+        if let Value::Error { variant, .. } = result {
+            assert_eq!(variant, "ValidationError");
+        } else {
+            panic!("Expected ValidationError, got {:?}", result);
+        }
+    }
+
+    #[test]
+    fn validate_as_passes_valid_data() {
+        let input = r#"
+type User { name: String | minlen 1, age: Int | min 0 | max 150 }
+let x: Struct = { name: "Alice", age: 30 } | validate as User
+x
+"#;
+        let result = eval(input);
+        if let Value::Struct { fields, .. } = result {
+            assert_eq!(
+                fields.get("name").unwrap(),
+                &Value::String("Alice".to_string())
+            );
+            assert_eq!(fields.get("age").unwrap(), &Value::Int(30));
+        } else {
+            panic!("Expected Struct, got {:?}", result);
+        }
     }
 }
