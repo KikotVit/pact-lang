@@ -101,4 +101,22 @@ test "insert and query" {
 }
 ```
 
-> See also: route, effects, test, pipeline
+## Watch (SSE streaming)
+
+`db.watch()` returns a stream descriptor for real-time SSE. Used inside `stream` routes:
+
+```pact
+intent "stream new items"
+stream GET "/items/live" {
+  needs db
+  send db.watch("items")
+}
+```
+
+With a filter:
+
+```pact
+send db.watch("items", { category: "books" })
+```
+
+> See also: route, stream, effects, test, pipeline

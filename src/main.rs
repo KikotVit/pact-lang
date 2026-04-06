@@ -58,7 +58,12 @@ fn main() {
             "  Errors:      fn foo() -> T or NotFound  ...  | on NotFound: respond 404 with ..."
         );
         println!("  Effects:     needs db, rng, time");
-        println!("  Builtins:    print(), list(), db.insert(), db.query(), rng.hex(), time.now()");
+        println!(
+            "  Streaming:   intent \"desc\" then stream GET \"/live\" {{ send db.watch(\"table\") }}"
+        );
+        println!(
+            "  Builtins:    print(), list(), db.insert(), db.query(), db.watch(), rng.hex(), time.now()"
+        );
         println!(
             "  Str methods: .length() .contains() .to_upper() .to_lower() .trim() .split() .replace()"
         );

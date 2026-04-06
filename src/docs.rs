@@ -15,6 +15,7 @@ pub fn get_doc(topic: &str) -> Option<&'static str> {
         "app" => Some(include_str!("docs/app.md")),
         "http" => Some(include_str!("docs/http.md")),
         "modules" => Some(include_str!("docs/modules.md")),
+        "stream" => Some(include_str!("docs/stream.md")),
         _ => None,
     }
 }
@@ -58,6 +59,10 @@ pub fn list_topics() -> Vec<(&'static str, &'static str)> {
             "modules",
             "Import functions and types from other .pact files",
         ),
+        (
+            "stream",
+            "Real-time SSE streaming with stream routes and db.watch()",
+        ),
     ]
 }
 
@@ -85,6 +90,7 @@ mod tests {
             "app",
             "http",
             "modules",
+            "stream",
         ];
         for topic in &topics {
             let content = get_doc(topic);
@@ -100,7 +106,7 @@ mod tests {
     #[test]
     fn test_list_topics_count() {
         let topics = list_topics();
-        assert_eq!(topics.len(), 15, "Expected 15 topics, got {}", topics.len());
+        assert_eq!(topics.len(), 16, "Expected 16 topics, got {}", topics.len());
     }
 
     #[test]

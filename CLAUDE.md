@@ -7,11 +7,11 @@
 
 ## Architecture
 - Tree-walking interpreter, NOT a transpiler. Executes .pact files directly.
-- `intent` always goes BEFORE both `fn` and `route` declarations — one pattern for everything.
+- `intent` always goes BEFORE `fn`, `route`, and `stream` declarations — one pattern for everything.
 - Errors are values (`Value::Error`), not exceptions. `RuntimeError` is only for interpreter crashes.
 
 ## Testing
-- `cargo test` runs all Rust tests (~395).
+- `cargo test` runs all Rust tests (~408).
 - `pact test file.pact` runs PACT test blocks.
 - Tests use `db.memory()` (HashMap), not SQLite.
 

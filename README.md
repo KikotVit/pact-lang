@@ -226,13 +226,14 @@ pact test users.pact
 | Early return | `return Forbidden if user.role != "Admin"` |
 | Strings | `"Hello {user.name}, you have {count} items"` |
 | HTTP routes | `route GET "/users/{id}" { ... }` |
+| SSE streaming | `stream GET "/live" { send db.watch("table") }` |
 | App | `app Name { port: 8080, db: "sqlite://data.db" }` |
 
 ## Built-in effects
 
 | Effect | What it provides |
 |--------|-----------------|
-| `db` | `insert`, `query`, `find`, `update`, `delete` — backed by SQLite |
+| `db` | `insert`, `query`, `find`, `update`, `delete`, `watch` — backed by SQLite |
 | `time` | `now()` — current timestamp |
 | `rng` | `uuid()`, `hex(n)` — random generation |
 | `auth` | `require(request)` — checks Authorization: Bearer header |
@@ -256,9 +257,9 @@ pact test users.pact
 
 PACT is v0.3. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
-What exists: lexer, parser, tree-walking interpreter, HTTP server, SQLite storage, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact init`, `pact test`, `pact check`, `pact docs`), 395+ tests.
+What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, type linter, built-in MCP server, built-in documentation, CLI (`pact run`, `pact init`, `pact test`, `pact check`, `pact docs`), 408+ tests.
 
-What's next: HTTP client (`http` effect for calling external APIs), import/module system, authentication, LSP for editor support.
+What's next: authentication (JWT/API keys), import/module system, pipeline extensions, LSP for editor support.
 
 ## License
 
