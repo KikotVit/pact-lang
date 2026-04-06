@@ -346,14 +346,26 @@ impl Interpreter {
             Expr::FieldAccess { object, field } => {
                 let obj = self.eval_expr(object, env)?;
                 match &obj {
-                    Value::Struct { fields, .. } => fields
-                        .get(field)
-                        .cloned()
-                        .ok_or_else(|| self.error(&format!("Struct has no field '{}'", field))),
-                    Value::Effect { methods, .. } => methods
-                        .get(field)
-                        .cloned()
-                        .ok_or_else(|| self.error(&format!("Effect has no method '{}'", field))),
+                    Value::Struct { fields, .. } => fields.get(field).cloned().ok_or_else(|| {
+                        let available: Vec<String> = fields.keys().cloned().collect();
+                        let mut err = self.error(&format!("Struct has no field '{}'", field));
+                        if let Some(s) = suggest(field, &available) {
+                            err.hint = Some(format!(
+                                "Did you mean '{}'? Available fields: {}",
+                                s,
+                                available.join(", ")
+                            ));
+                        } else {
+                            err.hint = Some(format!("Available fields: {}", available.join(", ")));
+                        }
+                        err
+                    }),
+                    Value::Effect { methods, .. } => methods.get(field).cloned().ok_or_else(|| {
+                        let available: Vec<String> = methods.keys().cloned().collect();
+                        let mut err = self.error(&format!("Effect has no method '{}'", field));
+                        err.hint = Some(format!("Available methods: {}", available.join(", ")));
+                        err
+                    }),
                     Value::String(_) => {
                         let mut err = self.error(&format!(
                             "String has no field '{}'. Did you mean .{}()?",
@@ -376,11 +388,15 @@ impl Interpreter {
                         );
                         Err(err)
                     }
-                    _ => Err(self.error(&format!(
-                        "Cannot access field '{}' on {} value",
-                        field,
-                        obj.type_name()
-                    ))),
+                    _ => {
+                        let mut err = self.error(&format!(
+                            "Cannot access field '{}' on {} value",
+                            field,
+                            obj.type_name()
+                        ));
+                        err.hint = Some("Field access (.field) works on Struct values".to_string());
+                        Err(err)
+                    }
                 }
             }
             Expr::DotShorthand(parts) => {
@@ -400,15 +416,31 @@ impl Interpreter {
                     val = match &val {
                         Value::Struct { fields, .. } => {
                             fields.get(field).cloned().ok_or_else(|| {
-                                self.error(&format!("Struct has no field '{}'", field))
+                                let available: Vec<String> = fields.keys().cloned().collect();
+                                let mut err =
+                                    self.error(&format!("Struct has no field '{}'", field));
+                                if let Some(s) = suggest(field, &available) {
+                                    err.hint = Some(format!(
+                                        "Did you mean '{}'? Available fields: {}",
+                                        s,
+                                        available.join(", ")
+                                    ));
+                                } else {
+                                    err.hint =
+                                        Some(format!("Available fields: {}", available.join(", ")));
+                                }
+                                err
                             })?
                         }
                         _ => {
-                            return Err(self.error(&format!(
+                            let mut err = self.error(&format!(
                                 "Cannot access field '{}' on {} type",
                                 field,
                                 val.type_name()
-                            )));
+                            ));
+                            err.hint =
+                                Some("Field access (.field) works on Struct values".to_string());
+                            return Err(err);
                         }
                     };
                 }
@@ -426,53 +458,79 @@ impl Interpreter {
                         (Value::String(a), Value::String(b)) => {
                             Ok(Value::String(format!("{}{}", a, b)))
                         }
-                        _ => Err(self.error(&format!(
-                            "Cannot add {} and {}",
-                            left_val.type_name(),
-                            right_val.type_name()
-                        ))),
+                        _ => {
+                            let mut err = self.error(&format!(
+                                "Cannot add {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            ));
+                            err.hint = Some(
+                                "Addition works on Int, Float, or String + String".to_string(),
+                            );
+                            Err(err)
+                        }
                     },
                     BinaryOp::Sub => match (&left_val, &right_val) {
                         (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
                         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
                         (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
                         (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
-                        _ => Err(self.error(&format!(
-                            "Cannot subtract {} from {}",
-                            right_val.type_name(),
-                            left_val.type_name()
-                        ))),
+                        _ => {
+                            let mut err = self.error(&format!(
+                                "Cannot subtract {} from {}",
+                                right_val.type_name(),
+                                left_val.type_name()
+                            ));
+                            err.hint =
+                                Some("Subtraction works on Int and Float values".to_string());
+                            Err(err)
+                        }
                     },
                     BinaryOp::Mul => match (&left_val, &right_val) {
                         (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
                         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
                         (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
                         (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
-                        _ => Err(self.error(&format!(
-                            "Cannot multiply {} and {}",
-                            left_val.type_name(),
-                            right_val.type_name()
-                        ))),
-                    },
-                    BinaryOp::Div => match (&left_val, &right_val) {
-                        (Value::Int(_), Value::Int(0)) => Err(self.error("Division by zero")),
-                        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
-                        (Value::Float(_), Value::Float(b)) if *b == 0.0 => {
-                            Err(self.error("Division by zero"))
+                        _ => {
+                            let mut err = self.error(&format!(
+                                "Cannot multiply {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            ));
+                            err.hint =
+                                Some("Multiplication works on Int and Float values".to_string());
+                            Err(err)
                         }
-                        (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
-                        (Value::Int(_), Value::Float(b)) if *b == 0.0 => {
-                            Err(self.error("Division by zero"))
-                        }
-                        (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
-                        (Value::Float(_), Value::Int(0)) => Err(self.error("Division by zero")),
-                        (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
-                        _ => Err(self.error(&format!(
-                            "Cannot divide {} by {}",
-                            left_val.type_name(),
-                            right_val.type_name()
-                        ))),
                     },
+                    BinaryOp::Div => {
+                        let div_zero = || {
+                            let mut err = self.error("Division by zero");
+                            err.hint = Some(
+                                "Check that the divisor is not zero before dividing".to_string(),
+                            );
+                            Err(err)
+                        };
+                        match (&left_val, &right_val) {
+                            (Value::Int(_), Value::Int(0)) => div_zero(),
+                            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
+                            (Value::Float(_), Value::Float(b)) if *b == 0.0 => div_zero(),
+                            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+                            (Value::Int(_), Value::Float(b)) if *b == 0.0 => div_zero(),
+                            (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 / b)),
+                            (Value::Float(_), Value::Int(0)) => div_zero(),
+                            (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a / *b as f64)),
+                            _ => {
+                                let mut err = self.error(&format!(
+                                    "Cannot divide {} by {}",
+                                    left_val.type_name(),
+                                    right_val.type_name()
+                                ));
+                                err.hint =
+                                    Some("Division works on Int and Float values".to_string());
+                                Err(err)
+                            }
+                        }
+                    }
                     BinaryOp::Eq => Ok(Value::Bool(left_val == right_val)),
                     BinaryOp::NotEq => Ok(Value::Bool(left_val != right_val)),
                     BinaryOp::Lt => match (&left_val, &right_val) {
@@ -480,44 +538,60 @@ impl Interpreter {
                         (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
                         (Value::Int(a), Value::Float(b)) => Ok(Value::Bool((*a as f64) < *b)),
                         (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a < *b as f64)),
-                        _ => Err(self.error(&format!(
-                            "Cannot compare {} and {}",
-                            left_val.type_name(),
-                            right_val.type_name()
-                        ))),
+                        _ => {
+                            let mut err = self.error(&format!(
+                                "Cannot compare {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            ));
+                            err.hint = Some("Comparison works on Int and Float values".to_string());
+                            Err(err)
+                        }
                     },
                     BinaryOp::Gt => match (&left_val, &right_val) {
                         (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
                         (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
                         (Value::Int(a), Value::Float(b)) => Ok(Value::Bool(*a as f64 > *b)),
                         (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a > *b as f64)),
-                        _ => Err(self.error(&format!(
-                            "Cannot compare {} and {}",
-                            left_val.type_name(),
-                            right_val.type_name()
-                        ))),
+                        _ => {
+                            let mut err = self.error(&format!(
+                                "Cannot compare {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            ));
+                            err.hint = Some("Comparison works on Int and Float values".to_string());
+                            Err(err)
+                        }
                     },
                     BinaryOp::LtEq => match (&left_val, &right_val) {
                         (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
                         (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
                         (Value::Int(a), Value::Float(b)) => Ok(Value::Bool(*a as f64 <= *b)),
                         (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a <= *b as f64)),
-                        _ => Err(self.error(&format!(
-                            "Cannot compare {} and {}",
-                            left_val.type_name(),
-                            right_val.type_name()
-                        ))),
+                        _ => {
+                            let mut err = self.error(&format!(
+                                "Cannot compare {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            ));
+                            err.hint = Some("Comparison works on Int and Float values".to_string());
+                            Err(err)
+                        }
                     },
                     BinaryOp::GtEq => match (&left_val, &right_val) {
                         (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
                         (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
                         (Value::Int(a), Value::Float(b)) => Ok(Value::Bool(*a as f64 >= *b)),
                         (Value::Float(a), Value::Int(b)) => Ok(Value::Bool(*a >= *b as f64)),
-                        _ => Err(self.error(&format!(
-                            "Cannot compare {} and {}",
-                            left_val.type_name(),
-                            right_val.type_name()
-                        ))),
+                        _ => {
+                            let mut err = self.error(&format!(
+                                "Cannot compare {} and {}",
+                                left_val.type_name(),
+                                right_val.type_name()
+                            ));
+                            err.hint = Some("Comparison works on Int and Float values".to_string());
+                            Err(err)
+                        }
                     },
                     BinaryOp::And => Ok(Value::Bool(left_val.is_truthy() && right_val.is_truthy())),
                     BinaryOp::Or => Ok(Value::Bool(left_val.is_truthy() || right_val.is_truthy())),
@@ -529,13 +603,21 @@ impl Interpreter {
                     UnaryOp::Neg => match val {
                         Value::Int(n) => Ok(Value::Int(-n)),
                         Value::Float(n) => Ok(Value::Float(-n)),
-                        _ => Err(self.error(&format!("Cannot negate {} value", val.type_name()))),
+                        _ => {
+                            let mut err =
+                                self.error(&format!("Cannot negate {} value", val.type_name()));
+                            err.hint =
+                                Some("Negation (-) works on Int and Float values".to_string());
+                            Err(err)
+                        }
                     },
                     UnaryOp::Not => match val {
                         Value::Bool(b) => Ok(Value::Bool(!b)),
                         _ => {
-                            Err(self
-                                .error(&format!("Cannot apply 'not' to {} value", val.type_name())))
+                            let mut err = self
+                                .error(&format!("Cannot apply 'not' to {} value", val.type_name()));
+                            err.hint = Some("The 'not' operator works on Bool values".to_string());
+                            Err(err)
                         }
                     },
                 }
@@ -623,14 +705,17 @@ impl Interpreter {
         match callee_val {
             Value::Function { params, body, .. } => {
                 if params.len() != arg_vals.len() {
-                    return Err(self.error_at(
+                    let mut err = self.error_at(
                         span,
                         &format!(
                             "Expected {} arguments but got {}",
                             params.len(),
                             arg_vals.len()
                         ),
-                    ));
+                    );
+                    let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+                    err.hint = Some(format!("Parameters: {}", param_names.join(", ")));
+                    return Err(err);
                 }
                 // Create new env with parent = global (not caller env)
                 let mut fn_env = Environment::with_parent(self.global.clone());
@@ -654,10 +739,14 @@ impl Interpreter {
                 Ok(result)
             }
             Value::BuiltinFn { name } => self.call_builtin(&name, arg_vals),
-            other => Err(self.error_at(
-                span,
-                &format!("Cannot call {} as function", other.type_name()),
-            )),
+            other => {
+                let mut err = self.error_at(
+                    span,
+                    &format!("Cannot call {} as function", other.type_name()),
+                );
+                err.hint = Some("Only Function values can be called. Check that the name refers to a declared function".to_string());
+                Err(err)
+            }
         }
     }
 
@@ -754,9 +843,12 @@ impl Interpreter {
                             has_float = true;
                         }
                         _ => {
-                            return Err(
-                                self.error(&format!("Cannot sum {} values", item.type_name()))
+                            let mut err =
+                                self.error(&format!("Cannot sum {} values", item.type_name()));
+                            err.hint = Some(
+                                "The | sum step works on lists of Int or Float values".to_string(),
                             );
+                            return Err(err);
                         }
                     }
                 }
@@ -826,7 +918,11 @@ impl Interpreter {
                 let n = self.eval_expr(count, env)?;
                 let n = match n {
                     Value::Int(i) => i as usize,
-                    _ => return Err(self.error("take count must be an integer")),
+                    _ => {
+                        let mut err = self.error("take count must be an integer");
+                        err.hint = Some("Syntax: | take first 5  or  | take last 3".to_string());
+                        return Err(err);
+                    }
                 };
                 let result = match kind {
                     TakeKind::First => items.into_iter().take(n).collect(),
@@ -846,7 +942,11 @@ impl Interpreter {
                 let n = self.eval_expr(count, env)?;
                 let n = match n {
                     Value::Int(i) => i as usize,
-                    _ => return Err(self.error("skip count must be an integer")),
+                    _ => {
+                        let mut err = self.error("skip count must be an integer");
+                        err.hint = Some("Syntax: | skip 10".to_string());
+                        return Err(err);
+                    }
                 };
                 Ok(Value::List(items.into_iter().skip(n).collect()))
             }
@@ -896,7 +996,13 @@ impl Interpreter {
                 match current {
                     Value::Ok(v) => Ok(*v),
                     Value::Error { variant, .. } => {
-                        Err(self.error(&format!("Expected success but got Error.{}", variant)))
+                        let mut err =
+                            self.error(&format!("Expected success but got Error.{}", variant));
+                        err.hint = Some(
+                            "Handle the error with '| on ErrorType: ...' before '| expect success'"
+                                .to_string(),
+                        );
+                        Err(err)
                     }
                     other => Ok(other), // pass through non-Result values
                 }
@@ -1183,11 +1289,15 @@ impl Interpreter {
                     Err(err)
                 }
             },
-            _ => Err(self.error(&format!(
-                "Cannot call method '{}' on {}",
-                method,
-                receiver.type_name()
-            ))),
+            _ => {
+                let mut err = self.error(&format!(
+                    "Cannot call method '{}' on {}",
+                    method,
+                    receiver.type_name()
+                ));
+                err.hint = Some("Methods are available on String and List values".to_string());
+                Err(err)
+            }
         }
     }
 
@@ -1334,7 +1444,11 @@ impl Interpreter {
             "http.post" => self.builtin_http_request("POST", args),
             "http.put" => self.builtin_http_request("PUT", args),
             "http.delete" => self.builtin_http_request("DELETE", args),
-            _ => Err(self.error(&format!("Unknown builtin '{}'", name))),
+            _ => {
+                let mut err = self.error(&format!("Unknown builtin '{}'", name));
+                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), time.now(), rng.uuid(), rng.hex(), log.info(), log.warn(), log.error(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
+                Err(err)
+            }
         }
     }
 
@@ -2158,10 +2272,12 @@ impl Interpreter {
                             field_values.entry(k).or_insert(v);
                         }
                     } else {
-                        return Err(self.error(&format!(
+                        let mut err = self.error(&format!(
                             "Cannot spread {} into struct literal",
                             val.type_name()
-                        )));
+                        ));
+                        err.hint = Some("The ...spread operator works on Struct values: { ...existing_struct, new_field: value }".to_string());
+                        return Err(err);
                     }
                 }
             }
@@ -2184,7 +2300,9 @@ impl Interpreter {
         if val.is_truthy() {
             Ok(Value::Nothing)
         } else {
-            Err(self.error("Ensure failed: condition evaluated to false"))
+            let mut err = self.error("Ensure failed: condition evaluated to false");
+            err.hint = Some("The ensure expression checks a boolean condition".to_string());
+            Err(err)
         }
     }
 
@@ -4119,5 +4237,31 @@ test "no mock set - unmocked url should fail" {
             .collect();
         assert_eq!(super::suggest("nme", &candidates), Some("name"));
         assert_eq!(super::suggest("xyz", &candidates), None);
+    }
+
+    #[test]
+    fn test_division_by_zero_has_hint() {
+        let err = eval_fails("10 / 0");
+        assert!(err.message.contains("Division by zero"));
+        assert!(err.hint.is_some());
+    }
+
+    #[test]
+    fn test_struct_no_field_lists_available() {
+        let input = r#"let user: Struct = { name: "Alice", age: 30 }
+user.nme"#;
+        let err = eval_fails(input);
+        assert!(err.message.contains("Struct has no field 'nme'"));
+        let hint = err.hint.unwrap();
+        assert!(hint.contains("Did you mean 'name'?"));
+        assert!(hint.contains("Available fields:"));
+    }
+
+    #[test]
+    fn test_cannot_call_has_hint() {
+        let input = "let x: Int = 42\nx(1)";
+        let err = eval_fails(input);
+        assert!(err.message.contains("Cannot call"));
+        assert!(err.hint.is_some());
     }
 }
