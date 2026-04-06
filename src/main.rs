@@ -335,6 +335,7 @@ app {} {{ port: 8080 }}
         let mut interp = Interpreter::new(&source);
         interp.set_base_dir(filename);
         interp.setup_test_effects(); // provide effects for now
+        interp.load_jwt_secret();
         match interp.interpret(&program) {
             Ok(value) => {
                 if let Some((name, port, db_url)) = interp.app_config.clone() {

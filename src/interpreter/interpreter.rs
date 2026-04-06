@@ -58,6 +58,8 @@ pub struct Interpreter {
     pub http_mock_responses: Option<HashMap<String, Value>>,
     /// Tracks modules currently being loaded to detect circular imports
     loading_modules: HashSet<PathBuf>,
+    /// JWT secret for auth.require/auth.sign — loaded from JWT_SECRET env var
+    pub jwt_secret: Option<String>,
 }
 
 /// Compute Levenshtein edit distance between two strings.
@@ -113,7 +115,13 @@ impl Interpreter {
             blocked_effects: Vec::new(),
             http_mock_responses: None,
             loading_modules: HashSet::new(),
+            jwt_secret: None,
         }
+    }
+
+    /// Load JWT secret from JWT_SECRET environment variable.
+    pub fn load_jwt_secret(&mut self) {
+        self.jwt_secret = std::env::var("JWT_SECRET").ok();
     }
 
     pub fn open_sqlite(&mut self, url: &str) -> Result<(), RuntimeError> {
@@ -1422,40 +1430,8 @@ impl Interpreter {
                 }
                 Ok(Value::Nothing)
             }
-            "auth.require" => {
-                // Check Authorization header: "Bearer <token>"
-                if let Some(Value::Struct { fields, .. }) = args.first() {
-                    if let Some(Value::Struct {
-                        fields: headers, ..
-                    }) = fields.get("headers")
-                    {
-                        if let Some(Value::String(auth_header)) = headers.get("authorization") {
-                            let token = auth_header
-                                .strip_prefix("Bearer ")
-                                .unwrap_or(auth_header.as_str());
-                            if !token.is_empty() {
-                                let mut user_fields = HashMap::new();
-                                user_fields
-                                    .insert("id".to_string(), Value::String("user-1".to_string()));
-                                user_fields.insert(
-                                    "name".to_string(),
-                                    Value::String("Authenticated User".to_string()),
-                                );
-                                user_fields
-                                    .insert("role".to_string(), Value::String("Admin".to_string()));
-                                return Ok(Value::Struct {
-                                    type_name: "User".to_string(),
-                                    fields: user_fields,
-                                });
-                            }
-                        }
-                    }
-                }
-                Ok(Value::Error {
-                    variant: "Unauthorized".to_string(),
-                    fields: None,
-                })
-            }
+            "auth.require" => self.builtin_auth_require(args),
+            "auth.sign" => self.builtin_auth_sign(args),
             "auth.mock" => {
                 // For testing: returns the provided user struct as-is
                 Ok(args.into_iter().next().unwrap_or(Value::Nothing))
@@ -1488,7 +1464,7 @@ impl Interpreter {
             "http.delete" => self.builtin_http_request("DELETE", args),
             _ => {
                 let mut err = self.error(&format!("Unknown builtin '{}'", name));
-                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), db.watch(), time.now(), rng.uuid(), rng.hex(), log.info(), log.warn(), log.error(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
+                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), db.watch(), time.now(), rng.uuid(), rng.hex(), log.info(), log.warn(), log.error(), auth.require(), auth.sign(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
                 Err(err)
             }
         }
@@ -1818,6 +1794,139 @@ impl Interpreter {
         Ok(Value::DbWatch { table, filter })
     }
 
+    fn extract_bearer_token(args: &[Value]) -> Option<String> {
+        if let Some(Value::Struct { fields, .. }) = args.first() {
+            // Check Authorization: Bearer <token> header
+            if let Some(Value::Struct {
+                fields: headers, ..
+            }) = fields.get("headers")
+            {
+                if let Some(Value::String(auth_header)) = headers.get("authorization") {
+                    let token = auth_header
+                        .strip_prefix("Bearer ")
+                        .unwrap_or(auth_header.as_str());
+                    if !token.is_empty() {
+                        return Some(token.to_string());
+                    }
+                }
+            }
+            // Fallback: check query.token (for SSE/EventSource which can't set headers)
+            if let Some(Value::Struct { fields: query, .. }) = fields.get("query") {
+                if let Some(Value::String(token)) = query.get("token") {
+                    if !token.is_empty() {
+                        return Some(token.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn builtin_auth_require(&self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let token = match Self::extract_bearer_token(&args) {
+            Some(t) => t,
+            None => {
+                return Ok(Value::Error {
+                    variant: "Unauthorized".to_string(),
+                    fields: Some({
+                        let mut f = HashMap::new();
+                        f.insert(
+                            "message".to_string(),
+                            Value::String("Missing Authorization header".to_string()),
+                        );
+                        f
+                    }),
+                });
+            }
+        };
+
+        match &self.jwt_secret {
+            Some(secret) => {
+                // Real JWT validation
+                use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+                let key = DecodingKey::from_secret(secret.as_bytes());
+                let mut validation = Validation::new(Algorithm::HS256);
+                validation.required_spec_claims.clear();
+
+                match decode::<serde_json::Value>(&token, &key, &validation) {
+                    Ok(token_data) => {
+                        Ok(crate::interpreter::json::json_to_value(&token_data.claims))
+                    }
+                    Err(e) => {
+                        let msg = match e.kind() {
+                            jsonwebtoken::errors::ErrorKind::ExpiredSignature => "Token expired",
+                            jsonwebtoken::errors::ErrorKind::InvalidSignature => {
+                                "Invalid signature"
+                            }
+                            _ => "Invalid token",
+                        };
+                        Ok(Value::Error {
+                            variant: "Unauthorized".to_string(),
+                            fields: Some({
+                                let mut f = HashMap::new();
+                                f.insert("message".to_string(), Value::String(msg.to_string()));
+                                f
+                            }),
+                        })
+                    }
+                }
+            }
+            None => {
+                // No JWT_SECRET — dev/demo mode, return mock user
+                let mut user_fields = HashMap::new();
+                user_fields.insert("id".to_string(), Value::String("user-1".to_string()));
+                user_fields.insert(
+                    "name".to_string(),
+                    Value::String("Authenticated User".to_string()),
+                );
+                user_fields.insert("role".to_string(), Value::String("Admin".to_string()));
+                Ok(Value::Struct {
+                    type_name: "User".to_string(),
+                    fields: user_fields,
+                })
+            }
+        }
+    }
+
+    fn builtin_auth_sign(&self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let payload = args
+            .first()
+            .ok_or_else(|| self.error("auth.sign expects a payload struct"))?;
+
+        match &self.jwt_secret {
+            Some(secret) => {
+                use jsonwebtoken::{EncodingKey, Header, encode};
+                let json_payload = crate::interpreter::json::value_to_json(payload);
+
+                let claims = match json_payload {
+                    serde_json::Value::Object(mut m) => {
+                        // Add exp claim (1 hour from now) if not present
+                        if !m.contains_key("exp") {
+                            let exp = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs()
+                                + 3600;
+                            m.insert("exp".to_string(), serde_json::json!(exp));
+                        }
+                        serde_json::Value::Object(m)
+                    }
+                    _ => return Err(self.error("auth.sign payload must be a struct")),
+                };
+
+                let key = EncodingKey::from_secret(secret.as_bytes());
+                match encode(&Header::default(), &claims, &key) {
+                    Ok(token) => Ok(Value::String(token)),
+                    Err(e) => Err(self.error(&format!("Failed to sign token: {}", e))),
+                }
+            }
+            None => {
+                // No JWT_SECRET — dev mode, return a mock token
+                Ok(Value::String("dev-token-mock".to_string()))
+            }
+        }
+    }
+
     fn builtin_time_now(&self) -> Result<Value, RuntimeError> {
         let time_str = self
             .fixed_time
@@ -2015,6 +2124,12 @@ impl Interpreter {
             "mock".to_string(),
             Value::BuiltinFn {
                 name: "auth.mock".to_string(),
+            },
+        );
+        auth_methods.insert(
+            "sign".to_string(),
+            Value::BuiltinFn {
+                name: "auth.sign".to_string(),
             },
         );
         self.global.bind(
@@ -4442,5 +4557,84 @@ stream GET "/events" {
         assert_eq!(interp.streams.len(), 1);
         assert_eq!(interp.streams[0].method, "GET");
         assert_eq!(interp.streams[0].path, "/events");
+    }
+
+    #[test]
+    fn test_auth_sign_and_require_roundtrip() {
+        let source = r#"auth.sign({ id: "user-1", role: "admin" })"#;
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens, source);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(source);
+        interp.setup_test_effects();
+        interp.jwt_secret = Some("test-secret".to_string());
+        let token = interp.interpret(&program).unwrap();
+
+        // Token should be a JWT string
+        match &token {
+            Value::String(t) => {
+                assert!(t.contains('.'), "JWT should have dots: {}", t);
+                // Now verify the token
+                let verify_source = format!(
+                    r#"auth.require({{ headers: {{ authorization: "Bearer {}" }} }})"#,
+                    t
+                );
+                let mut lexer2 = crate::lexer::Lexer::new(&verify_source);
+                let tokens2 = lexer2.tokenize().unwrap();
+                let mut parser2 = crate::parser::Parser::new(tokens2, &verify_source);
+                let program2 = parser2.parse().unwrap();
+                let mut interp2 = Interpreter::new(&verify_source);
+                interp2.setup_test_effects();
+                interp2.jwt_secret = Some("test-secret".to_string());
+                let result = interp2.interpret(&program2).unwrap();
+                // Should return the decoded claims
+                if let Value::Struct { fields, .. } = &result {
+                    assert_eq!(fields.get("id"), Some(&Value::String("user-1".to_string())));
+                    assert_eq!(
+                        fields.get("role"),
+                        Some(&Value::String("admin".to_string()))
+                    );
+                } else {
+                    panic!("Expected Struct with claims, got: {:?}", result);
+                }
+            }
+            _ => panic!("Expected String token, got: {:?}", token),
+        }
+    }
+
+    #[test]
+    fn test_auth_require_invalid_token() {
+        let source = r#"auth.require({ headers: { authorization: "Bearer invalid-token" } })"#;
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens, source);
+        let program = parser.parse().unwrap();
+        let mut interp = Interpreter::new(source);
+        interp.setup_test_effects();
+        interp.jwt_secret = Some("test-secret".to_string());
+        let result = interp.interpret(&program).unwrap();
+        match result {
+            Value::Error { variant, .. } => assert_eq!(variant, "Unauthorized"),
+            _ => panic!("Expected Unauthorized error, got: {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_auth_require_no_secret_falls_back_to_mock() {
+        let result =
+            eval_with_effects(r#"auth.require({ headers: { authorization: "Bearer anything" } })"#);
+        // Without jwt_secret, should return mock user
+        if let Value::Struct { fields, .. } = &result {
+            assert_eq!(fields.get("id"), Some(&Value::String("user-1".to_string())));
+        } else {
+            panic!("Expected mock User struct, got: {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_auth_sign_no_secret_returns_mock_token() {
+        let result = eval_with_effects(r#"auth.sign({ id: "user-1" })"#);
+        assert_eq!(result, Value::String("dev-token-mock".to_string()));
     }
 }
