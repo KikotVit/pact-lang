@@ -42,9 +42,16 @@ function findPact(): string | undefined {
   return undefined;
 }
 
+const outputChannel = window.createOutputChannel("PACT Language Server");
+
 export function activate(context: ExtensionContext) {
+  outputChannel.appendLine("PACT extension activating...");
+
   const config = workspace.getConfiguration("pact");
   const pactPath = config.get<string>("path") || findPact() || "pact";
+
+  outputChannel.appendLine(`Using pact binary: ${pactPath}`);
+  outputChannel.appendLine(`Exists: ${fs.existsSync(pactPath)}`);
 
   if (!fs.existsSync(pactPath) && pactPath === "pact") {
     window.showWarningMessage(
@@ -60,7 +67,10 @@ export function activate(context: ExtensionContext) {
 
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "pact" }],
+    outputChannel,
   };
+
+  outputChannel.appendLine(`Starting LSP: ${pactPath} lsp`);
 
   client = new LanguageClient(
     "pact-lsp",
@@ -69,7 +79,10 @@ export function activate(context: ExtensionContext) {
     clientOptions
   );
 
-  client.start();
+  client.start().then(
+    () => outputChannel.appendLine("LSP client started successfully"),
+    (err) => outputChannel.appendLine(`LSP client failed to start: ${err}`)
+  );
 }
 
 export function deactivate(): Thenable<void> | undefined {

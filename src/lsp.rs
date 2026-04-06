@@ -449,6 +449,8 @@ pub fn run_lsp_server() {
         let id = msg.get("id");
         let params = msg.get("params").cloned().unwrap_or(serde_json::json!({}));
 
+        eprintln!("[pact-lsp] method: {}", method);
+
         match method {
             "initialize" => {
                 if let Some(id) = id {
@@ -469,13 +471,16 @@ pub fn run_lsp_server() {
             "exit" => break,
 
             "textDocument/didOpen" => {
+                eprintln!("[pact-lsp] didOpen received");
                 if let Some(doc) = params.get("textDocument") {
                     let uri = doc["uri"].as_str().unwrap_or("").to_string();
                     let text = doc["text"].as_str().unwrap_or("").to_string();
+                    eprintln!("[pact-lsp] uri={}, text_len={}", uri, text.len());
                     server.documents.insert(uri.clone(), text.clone());
 
                     // Publish diagnostics
                     let (diags, _) = analyze(&text, &uri);
+                    eprintln!("[pact-lsp] publishing {} diagnostics", diags.len());
                     let notif = make_notification(
                         "textDocument/publishDiagnostics",
                         serde_json::json!({

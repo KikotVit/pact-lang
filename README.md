@@ -262,7 +262,7 @@ PACT is v0.4. It works for building small APIs and CRUD services with SQLite per
 
 What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, JWT auth, module/import system, validation constraints, type linter, code formatter, LSP server, built-in MCP server (5 tools), built-in documentation, VS Code extension, CLI (`pact run`, `pact init`, `pact fmt`, `pact test`, `pact check`, `pact lsp`, `pact docs`), 449+ tests.
 
-What's next: web playground, package manager.
+What's next: deep type checker (struct fields, function args, effect usage), web playground.
 
 ## License
 
