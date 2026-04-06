@@ -26,6 +26,7 @@ pub struct StoredRoute {
     pub body: Vec<Statement>,
 }
 
+#[derive(Clone)]
 pub struct StoredStream {
     pub method: String,
     pub path: String,

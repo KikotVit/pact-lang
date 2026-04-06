@@ -627,6 +627,93 @@ pub fn filter_by_struct(items: &[Value], filter: &Value) -> Vec<Value> {
         .collect()
 }
 
+// ── SSE polling helper ─────────────────────────────────────────────
+
+/// Query new rows since a given rowid for SSE streaming.
+/// Returns vec of (rowid, json_string) for each new row.
+pub fn sse_query_new_rows(
+    conn: &Connection,
+    table: &str,
+    filter: &Option<Box<Value>>,
+    since_rowid: i64,
+) -> Result<Vec<(i64, String)>, String> {
+    // Get column names from table_info
+    let cols: Vec<String> = {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info(\"{}\")", table))
+            .map_err(|e| format!("pragma: {}", e))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("pragma query: {}", e))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    if cols.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build WHERE clause
+    let mut where_parts = vec!["rowid > ?".to_string()];
+    let mut param_values: Vec<Box<dyn ToSql>> = vec![Box::new(since_rowid)];
+
+    if let Some(filter_val) = filter {
+        if let Value::Struct { fields, .. } = filter_val.as_ref() {
+            for col in &cols {
+                if let Some(val) = fields.get(col) {
+                    where_parts.push(format!("\"{}\" = ?", col));
+                    param_values.push(value_to_sql(val));
+                }
+            }
+        }
+    }
+
+    let col_list: String = cols
+        .iter()
+        .map(|c| format!("\"{}\"", c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT rowid, {} FROM \"{}\" WHERE {} ORDER BY rowid",
+        col_list,
+        table,
+        where_parts.join(" AND ")
+    );
+
+    let param_refs: Vec<&dyn ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql).map_err(|e| format!("prepare: {}", e))?;
+
+    let mut results = Vec::new();
+    let mut rows = stmt
+        .query(param_refs.as_slice())
+        .map_err(|e| format!("query: {}", e))?;
+
+    while let Some(row) = rows.next().map_err(|e| format!("row: {}", e))? {
+        let rowid: i64 = row.get(0).map_err(|e| format!("rowid: {}", e))?;
+        // Build JSON object from columns
+        let mut obj = serde_json::Map::new();
+        for (i, col_name) in cols.iter().enumerate() {
+            // Column index is i+1 (0 is rowid)
+            let val: rusqlite::types::Value = row
+                .get(i + 1)
+                .map_err(|e| format!("col {}: {}", col_name, e))?;
+            let json_val = match val {
+                rusqlite::types::Value::Null => serde_json::Value::Null,
+                rusqlite::types::Value::Integer(n) => serde_json::json!(n),
+                rusqlite::types::Value::Real(f) => serde_json::json!(f),
+                rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
+                rusqlite::types::Value::Blob(b) => {
+                    serde_json::Value::String(format!("<blob {} bytes>", b.len()))
+                }
+            };
+            obj.insert(col_name.clone(), json_val);
+        }
+        let json_str = serde_json::Value::Object(obj).to_string();
+        results.push((rowid, json_str));
+    }
+
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

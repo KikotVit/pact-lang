@@ -1,8 +1,14 @@
 use std::collections::HashMap;
+use std::io;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
+use rusqlite::Connection;
 use tiny_http::{Header, Response, Server, StatusCode};
 
 use crate::interpreter::Interpreter;
+use crate::interpreter::db::sse_query_new_rows;
 use crate::interpreter::json::{json_to_value, value_to_json};
 use crate::interpreter::value::Value;
 
@@ -47,6 +53,125 @@ fn match_path(segments: &[PathSegment], path: &str) -> Option<HashMap<String, St
     Some(params)
 }
 
+// ── SSE support ────────────────────────────────────────────────────
+
+/// Custom Read impl that blocks on a channel receiver.
+/// Used to stream SSE events through tiny_http's Response.
+struct SseReader {
+    rx: mpsc::Receiver<Vec<u8>>,
+    buffer: Vec<u8>,
+    pos: usize,
+}
+
+impl SseReader {
+    fn new(rx: mpsc::Receiver<Vec<u8>>) -> Self {
+        SseReader {
+            rx,
+            buffer: Vec::new(),
+            pos: 0,
+        }
+    }
+}
+
+impl io::Read for SseReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.pos >= self.buffer.len() {
+            match self.rx.recv() {
+                Ok(data) => {
+                    self.buffer = data;
+                    self.pos = 0;
+                }
+                Err(_) => return Ok(0), // Channel closed = end stream
+            }
+        }
+        let available = &self.buffer[self.pos..];
+        let to_copy = available.len().min(buf.len());
+        buf[..to_copy].copy_from_slice(&available[..to_copy]);
+        self.pos += to_copy;
+        Ok(to_copy)
+    }
+}
+
+fn format_sse_event(id: i64, data: &str) -> Vec<u8> {
+    format!("id: {}\ndata: {}\n\n", id, data).into_bytes()
+}
+
+fn handle_sse(
+    request: tiny_http::Request,
+    table: String,
+    filter: Option<Box<Value>>,
+    db_path: Option<String>,
+    last_event_id: i64,
+) {
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+
+    // Spawn polling thread
+    let poll_tx = tx.clone();
+    thread::spawn(move || {
+        let conn = match &db_path {
+            Some(path) => match Connection::open(path) {
+                Ok(c) => {
+                    let _ = c.execute_batch("PRAGMA journal_mode=WAL;");
+                    c
+                }
+                Err(_) => return,
+            },
+            None => return,
+        };
+
+        let mut last_rowid = last_event_id;
+
+        loop {
+            match sse_query_new_rows(&conn, &table, &filter, last_rowid) {
+                Ok(rows) => {
+                    for (rowid, json) in rows {
+                        if poll_tx.send(format_sse_event(rowid, &json)).is_err() {
+                            return; // Client disconnected
+                        }
+                        last_rowid = rowid;
+                    }
+                }
+                Err(_) => return,
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    });
+
+    // Send SSE response — blocks until channel closes (client disconnect)
+    let sse_reader = SseReader::new(rx);
+    let mut headers = vec![
+        Header::from_bytes("Content-Type", "text/event-stream").unwrap(),
+        Header::from_bytes("Cache-Control", "no-cache").unwrap(),
+        Header::from_bytes("Connection", "keep-alive").unwrap(),
+    ];
+    add_cors_headers(&mut headers);
+    let response = Response::new(StatusCode(200), headers, sse_reader, None, None);
+    let _ = request.respond(response);
+    drop(tx); // Signal polling thread to stop
+}
+
+// ── CORS ───────────────────────────────────────────────────────────
+
+fn add_cors_headers(headers: &mut Vec<Header>) {
+    headers.push(Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap());
+    headers.push(
+        Header::from_bytes(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, Last-Event-ID",
+        )
+        .unwrap(),
+    );
+    headers.push(
+        Header::from_bytes(
+            "Access-Control-Allow-Methods",
+            "GET, POST, PUT, DELETE, OPTIONS",
+        )
+        .unwrap(),
+    );
+}
+
+// ── Server ─────────────────────────────────────────────────────────
+
 pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
     let addr = format!("0.0.0.0:{}", port);
     let server = match Server::http(&addr) {
@@ -59,13 +184,22 @@ pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
 
     println!("{} listening on http://{}", name, addr);
 
-    // Pre-compile path matchers
+    // Pre-compile path matchers for routes and streams
     let routes: Vec<(String, Vec<PathSegment>, usize)> = interpreter
         .routes
         .iter()
         .enumerate()
         .map(|(i, r)| (r.method.clone(), parse_path_template(&r.path), i))
         .collect();
+
+    let stream_routes: Vec<(String, Vec<PathSegment>, usize)> = interpreter
+        .streams
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.method.clone(), parse_path_template(&s.path), i))
+        .collect();
+
+    let db_path = interpreter.get_db_path();
 
     for mut request in server.incoming_requests() {
         let method = request.method().to_string().to_uppercase();
@@ -75,7 +209,87 @@ pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
         // Parse query string
         let query_params = parse_query_string(&url);
 
-        // Find matching route
+        // OPTIONS preflight
+        if method == "OPTIONS" {
+            let mut headers = vec![];
+            add_cors_headers(&mut headers);
+            let response = Response::new(
+                StatusCode(204),
+                headers,
+                std::io::Cursor::new(vec![]),
+                Some(0),
+                None,
+            );
+            let _ = request.respond(response);
+            continue;
+        }
+
+        // Check stream routes first
+        let stream_matched = stream_routes
+            .iter()
+            .find(|(m, segs, _)| m.to_uppercase() == method && match_path(segs, path).is_some());
+
+        if let Some((_, segs, stream_idx)) = stream_matched {
+            let path_params = match_path(segs, path).unwrap_or_default();
+
+            // Extract headers before consuming the request
+            let last_event_id: i64 = request
+                .headers()
+                .iter()
+                .find(|h| h.field.to_string().to_lowercase() == "last-event-id")
+                .and_then(|h| h.value.as_str().parse().ok())
+                .unwrap_or(0);
+
+            let mut headers_map = HashMap::new();
+            for header in request.headers() {
+                headers_map.insert(
+                    header.field.to_string().to_lowercase(),
+                    header.value.to_string(),
+                );
+            }
+
+            let req_value = build_request_value(
+                &method,
+                path,
+                path_params,
+                query_params,
+                headers_map,
+                Value::Nothing,
+            );
+
+            let stream = interpreter.streams[*stream_idx].clone();
+            match interpreter.execute_stream(&stream, req_value) {
+                Ok(Value::DbWatch { table, filter }) => {
+                    let db_path_clone = db_path.clone();
+                    thread::spawn(move || {
+                        handle_sse(request, table, filter, db_path_clone, last_event_id);
+                    });
+                }
+                Ok(Value::Struct { ref fields, .. }) if fields.contains_key("status") => {
+                    // Auth or permission error — return normal HTTP response
+                    let status = match fields.get("status") {
+                        Some(Value::Int(n)) => *n as i32,
+                        _ => 500,
+                    };
+                    let body = fields.get("body").unwrap_or(&Value::Nothing);
+                    let json_body = serde_json::to_string(&value_to_json(body)).unwrap_or_default();
+                    let _ = request.respond(make_json_response(status, &json_body));
+                }
+                Ok(_) => {
+                    let _ = request.respond(make_json_response(
+                        500,
+                        r#"{"error":"Stream must use send db.watch()"}"#,
+                    ));
+                }
+                Err(err) => {
+                    let error_json = serde_json::json!({"error": err.message}).to_string();
+                    let _ = request.respond(make_json_response(500, &error_json));
+                }
+            }
+            continue;
+        }
+
+        // Find matching regular route
         let matched = routes
             .iter()
             .find(|(m, segs, _)| m.to_uppercase() == method && match_path(segs, path).is_some());
@@ -238,9 +452,11 @@ fn make_redirect_response(status: i32, location: &str) -> Response<std::io::Curs
     let data = body.as_bytes().to_vec();
     let location_header = Header::from_bytes("Location", location).unwrap();
     let content_type = Header::from_bytes("Content-Type", "application/json").unwrap();
+    let mut headers = vec![location_header, content_type];
+    add_cors_headers(&mut headers);
     Response::new(
         StatusCode(status as u16),
-        vec![location_header, content_type],
+        headers,
         std::io::Cursor::new(data.clone()),
         Some(data.len()),
         None,
@@ -249,10 +465,12 @@ fn make_redirect_response(status: i32, location: &str) -> Response<std::io::Curs
 
 fn make_json_response(status: i32, body: &str) -> Response<std::io::Cursor<Vec<u8>>> {
     let data = body.as_bytes().to_vec();
-    let header = Header::from_bytes("Content-Type", "application/json").unwrap();
+    let content_type = Header::from_bytes("Content-Type", "application/json").unwrap();
+    let mut headers = vec![content_type];
+    add_cors_headers(&mut headers);
     Response::new(
         StatusCode(status as u16),
-        vec![header],
+        headers,
         std::io::Cursor::new(data.clone()),
         Some(data.len()),
         None,
@@ -303,5 +521,35 @@ mod tests {
     fn parse_empty_query() {
         let params = parse_query_string("/users");
         assert!(params.is_empty());
+    }
+
+    #[test]
+    fn sse_event_format() {
+        let event = format_sse_event(42, r#"{"msg":"hello"}"#);
+        let s = String::from_utf8(event).unwrap();
+        assert!(s.contains("id: 42\n"));
+        assert!(s.contains("data: {\"msg\":\"hello\"}\n"));
+        assert!(s.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn sse_reader_delivers_data() {
+        let (tx, rx) = mpsc::channel();
+        let mut reader = SseReader::new(rx);
+
+        tx.send(b"hello".to_vec()).unwrap();
+        tx.send(b"world".to_vec()).unwrap();
+        drop(tx);
+
+        let mut buf = [0u8; 5];
+        let n = io::Read::read(&mut reader, &mut buf).unwrap();
+        assert_eq!(&buf[..n], b"hello");
+
+        let n = io::Read::read(&mut reader, &mut buf).unwrap();
+        assert_eq!(&buf[..n], b"world");
+
+        // Channel closed
+        let n = io::Read::read(&mut reader, &mut buf).unwrap();
+        assert_eq!(n, 0);
     }
 }
