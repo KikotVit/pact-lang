@@ -27,7 +27,7 @@ route POST "/items" {
 
 ## db — database access
 
-Provides `db.insert`, `db.query`, `db.find`, `db.update`, `db.delete`.
+Provides `db.insert`, `db.query`, `db.find`, `db.update`, `db.delete`, `db.watch`.
 
 ```pact
 db.insert("users", { id: "1", name: "Alice" })
@@ -35,7 +35,10 @@ db.query("users") | filter where .active == true
 db.find("users", { id: "1" })
 db.update("users", "1", { id: "1", name: "Bob" })
 db.delete("users", "1")
+db.watch("users")
 ```
+
+`db.watch` returns a stream descriptor for SSE. See `pact docs stream`.
 
 ## time — current time
 

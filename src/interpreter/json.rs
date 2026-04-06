@@ -57,6 +57,9 @@ pub fn value_to_json(value: &Value) -> serde_json::Value {
                 .collect();
             serde_json::Value::Object(obj)
         }
+        Value::DbWatch { table, .. } => {
+            serde_json::json!({"__type": "DbWatch", "table": table})
+        }
         // Functions, builtins, effects don't serialize
         _ => serde_json::Value::Null,
     }

@@ -1103,11 +1103,11 @@ mod tests {
     }
 
     #[test]
-    fn all_23_keywords() {
+    fn all_24_keywords() {
         // true/false are keywords but lexer emits BoolLiteral — tested in bool_literals_from_keywords
         assert_eq!(
             tokenize(
-                "fn let var type if else match return use intent ensure needs route test app check true false nothing and or not as"
+                "fn let var type if else match return use intent ensure needs route stream test app check true false nothing and or not as"
             ),
             vec![
                 TokenKind::Fn,
@@ -1123,6 +1123,7 @@ mod tests {
                 TokenKind::Ensure,
                 TokenKind::Needs,
                 TokenKind::Route,
+                TokenKind::Stream,
                 TokenKind::Test,
                 TokenKind::App,
                 TokenKind::Check,
