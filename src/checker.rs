@@ -110,6 +110,7 @@ struct Checker<'a> {
     diagnostics: Vec<Diagnostic>,
     current_fn_return: Option<ResolvedType>,
     current_fn_effects: Option<Vec<std::string::String>>,
+    current_stmt_span: Option<Span>,
     base_dir: Option<PathBuf>,
     module_type_cache: HashMap<
         PathBuf,
@@ -131,6 +132,7 @@ impl<'a> Checker<'a> {
             diagnostics: Vec::new(),
             current_fn_return: None,
             current_fn_effects: None,
+            current_stmt_span: None,
             base_dir,
             module_type_cache: HashMap::new(),
             loading_modules: HashSet::new(),
@@ -219,7 +221,8 @@ impl<'a> Checker<'a> {
         message: std::string::String,
         hint: Option<std::string::String>,
     ) {
-        let (line, column, source_line) = if let Some(s) = span {
+        let effective_span = span.as_ref().or(self.current_stmt_span.as_ref());
+        let (line, column, source_line) = if let Some(s) = effective_span {
             let src_line = self
                 .source
                 .lines()
@@ -704,6 +707,27 @@ impl<'a> Checker<'a> {
     }
 
     fn check_statement(&mut self, stmt: &Statement) {
+        // Set fallback span for diagnostics without their own span.
+        // Only save/restore when this statement provides a span.
+        let has_span = match stmt {
+            Statement::Let { span, .. }
+            | Statement::FnDecl { span, .. }
+            | Statement::Return { span, .. } => span.is_some(),
+            _ => false,
+        };
+        let prev_stmt_span = if has_span {
+            let prev = self.current_stmt_span.take();
+            self.current_stmt_span = match stmt {
+                Statement::Let { span, .. }
+                | Statement::FnDecl { span, .. }
+                | Statement::Return { span, .. } => span.clone(),
+                _ => None,
+            };
+            prev
+        } else {
+            None
+        };
+
         match stmt {
             // Check 1: Let binding type mismatch
             Statement::Let {
@@ -838,6 +862,9 @@ impl<'a> Checker<'a> {
                 self.check_expr(expr);
             }
             _ => {}
+        }
+        if has_span {
+            self.current_stmt_span = prev_stmt_span;
         }
     }
 
