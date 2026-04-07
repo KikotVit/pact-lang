@@ -211,8 +211,10 @@ impl<'a> Checker<'a> {
             (ResolvedType::String, ResolvedType::String) => true,
             (ResolvedType::Bool, ResolvedType::Bool) => true,
             (ResolvedType::Nothing, ResolvedType::Nothing) => true,
-            (ResolvedType::List(_), ResolvedType::List(_)) => true,
-            (ResolvedType::Map(_, _), ResolvedType::Map(_, _)) => true,
+            (ResolvedType::List(a), ResolvedType::List(b)) => Self::types_compatible(a, b),
+            (ResolvedType::Map(ak, av), ResolvedType::Map(bk, bv)) => {
+                Self::types_compatible(ak, bk) && Self::types_compatible(av, bv)
+            }
             (ResolvedType::Struct(a), ResolvedType::Struct(b)) => a == b,
             // Nothing is compatible with Optional(_)
             (ResolvedType::Optional(_), ResolvedType::Nothing) => true,
@@ -2485,5 +2487,43 @@ fn test_fn() -> String {
         let source = "let x: List<List<Int>> = list()\n";
         let diags = parse_and_check(source);
         assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn types_compatible_list_inner() {
+        use super::Checker;
+        assert!(Checker::types_compatible(
+            &ResolvedType::List(Box::new(ResolvedType::Int)),
+            &ResolvedType::List(Box::new(ResolvedType::Int)),
+        ));
+        assert!(!Checker::types_compatible(
+            &ResolvedType::List(Box::new(ResolvedType::Int)),
+            &ResolvedType::List(Box::new(ResolvedType::String)),
+        ));
+        // bare List (Unknown inner) matches any List<T>
+        assert!(Checker::types_compatible(
+            &ResolvedType::List(Box::new(ResolvedType::Unknown)),
+            &ResolvedType::List(Box::new(ResolvedType::Int)),
+        ));
+        assert!(Checker::types_compatible(
+            &ResolvedType::List(Box::new(ResolvedType::Int)),
+            &ResolvedType::List(Box::new(ResolvedType::Unknown)),
+        ));
+    }
+
+    #[test]
+    fn types_compatible_map_inner() {
+        use super::Checker;
+        assert!(Checker::types_compatible(
+            &ResolvedType::Map(Box::new(ResolvedType::String), Box::new(ResolvedType::Int)),
+            &ResolvedType::Map(Box::new(ResolvedType::String), Box::new(ResolvedType::Int)),
+        ));
+        assert!(!Checker::types_compatible(
+            &ResolvedType::Map(Box::new(ResolvedType::String), Box::new(ResolvedType::Int)),
+            &ResolvedType::Map(
+                Box::new(ResolvedType::String),
+                Box::new(ResolvedType::String)
+            ),
+        ));
     }
 }
