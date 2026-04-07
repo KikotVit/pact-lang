@@ -916,13 +916,82 @@ impl<'a> Checker<'a> {
                     self.check_expr(&arm.body);
                 }
             }
-            // Recurse into subexpressions
-            Expr::BinaryOp { left, right, .. } => {
+            // Check 7: Binary operator type checking
+            Expr::BinaryOp { left, op, right } => {
                 self.check_expr(left);
                 self.check_expr(right);
+                let left_t = self.infer_expr(left);
+                let right_t = self.infer_expr(right);
+                if matches!(left_t, ResolvedType::Unknown)
+                    || matches!(right_t, ResolvedType::Unknown)
+                {
+                    return;
+                }
+                match op {
+                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                        let valid = matches!(
+                            (&left_t, &right_t),
+                            (ResolvedType::Int, ResolvedType::Int)
+                                | (ResolvedType::Float, ResolvedType::Float)
+                                | (ResolvedType::Int, ResolvedType::Float)
+                                | (ResolvedType::Float, ResolvedType::Int)
+                        ) || (matches!(op, BinaryOp::Add)
+                            && matches!(left_t, ResolvedType::String)
+                            && matches!(right_t, ResolvedType::String));
+                        if !valid {
+                            self.emit(
+                                Severity::Error,
+                                &None,
+                                format!("Cannot apply '{:?}' to {} and {}", op, left_t, right_t),
+                                None,
+                            );
+                        }
+                    }
+                    BinaryOp::And | BinaryOp::Or => {
+                        if !matches!(left_t, ResolvedType::Bool) {
+                            self.emit(
+                                Severity::Error,
+                                &None,
+                                format!("Left side of '{:?}' must be Bool, got {}", op, left_t),
+                                None,
+                            );
+                        }
+                        if !matches!(right_t, ResolvedType::Bool) {
+                            self.emit(
+                                Severity::Error,
+                                &None,
+                                format!("Right side of '{:?}' must be Bool, got {}", op, right_t),
+                                None,
+                            );
+                        }
+                    }
+                    _ => {} // Comparison operators — lenient for v1
+                }
             }
-            Expr::UnaryOp { operand, .. } => {
+            // Check 8: Unary operator type checking
+            Expr::UnaryOp { op, operand } => {
                 self.check_expr(operand);
+                let t = self.infer_expr(operand);
+                if matches!(t, ResolvedType::Unknown) {
+                    return;
+                }
+                match op {
+                    UnaryOp::Neg => {
+                        if !matches!(t, ResolvedType::Int | ResolvedType::Float) {
+                            self.emit(Severity::Error, &None, format!("Cannot negate {}", t), None);
+                        }
+                    }
+                    UnaryOp::Not => {
+                        if !matches!(t, ResolvedType::Bool) {
+                            self.emit(
+                                Severity::Error,
+                                &None,
+                                format!("Cannot apply 'not' to {}", t),
+                                None,
+                            );
+                        }
+                    }
+                }
             }
             Expr::If {
                 condition,
@@ -1933,6 +2002,81 @@ fn test_fn() -> Int {
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("Cannot access field"));
         assert!(errors[0].message.contains("Int"));
+    }
+
+    #[test]
+    fn binary_op_string_plus_int() {
+        let source = r#"
+intent "test"
+fn test_fn() -> String {
+  let x: String = "hello" + 5
+  x
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.len() >= 1);
+        assert!(errors.iter().any(|e| e.message.contains("Cannot apply")));
+    }
+
+    #[test]
+    fn binary_op_valid_arithmetic() {
+        let source = r#"
+intent "test"
+fn test_fn() -> Int {
+  let x: Int = 1 + 2
+  let y: Float = 1.5 + 2.5
+  let z: String = "a" + "b"
+  x
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn unary_negate_string() {
+        let source = r#"
+intent "test"
+fn test_fn() -> String {
+  let x: String = -"hello"
+  x
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.iter().any(|e| e.message.contains("Cannot negate")));
+    }
+
+    #[test]
+    fn unary_not_int() {
+        let source = r#"
+intent "test"
+fn test_fn() -> Bool {
+  let x: Bool = not 42
+  x
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("Cannot apply 'not'"))
+        );
     }
 
     #[test]
