@@ -1316,8 +1316,28 @@ impl<'a> Checker<'a> {
             Expr::BoolLiteral(_) => ResolvedType::Bool,
             Expr::Nothing => ResolvedType::Nothing,
             Expr::Identifier(name) => self.lookup(name),
-            Expr::FnCall { callee, .. } => {
+            Expr::FnCall { callee, args, .. } => {
                 if let Expr::Identifier(name) = callee.as_ref() {
+                    // list() builtin: infer element type from arguments
+                    if name == "list" {
+                        if args.is_empty() {
+                            return ResolvedType::List(Box::new(ResolvedType::Unknown));
+                        }
+                        let first_type = self.infer_expr(&args[0]);
+                        if matches!(first_type, ResolvedType::Unknown) {
+                            return ResolvedType::List(Box::new(ResolvedType::Unknown));
+                        }
+                        let all_same = args.iter().skip(1).all(|a| {
+                            let t = self.infer_expr(a);
+                            Self::types_compatible(&first_type, &t)
+                                && !matches!(t, ResolvedType::Unknown)
+                        });
+                        return if all_same || args.len() == 1 {
+                            ResolvedType::List(Box::new(first_type))
+                        } else {
+                            ResolvedType::List(Box::new(ResolvedType::Unknown))
+                        };
+                    }
                     if let Some(sig) = self.fn_sigs.get(name) {
                         return sig.return_type.clone();
                     }
@@ -1334,13 +1354,22 @@ impl<'a> Checker<'a> {
                             return ResolvedType::String;
                         }
                         (ResolvedType::String, "split") => {
-                            return ResolvedType::List(Box::new(ResolvedType::Unknown));
+                            return ResolvedType::List(Box::new(ResolvedType::String));
                         }
                         (ResolvedType::List(_), "length") => return ResolvedType::Int,
                         (ResolvedType::List(_), "contains" | "is_empty") => {
                             return ResolvedType::Bool;
                         }
                         (ResolvedType::List(_), "join") => return ResolvedType::String,
+                        (ResolvedType::List(inner), "first" | "last" | "get") => {
+                            return inner.as_ref().clone();
+                        }
+                        (ResolvedType::List(inner), "reverse") => {
+                            return ResolvedType::List(inner.clone());
+                        }
+                        (ResolvedType::List(inner), "push") => {
+                            return ResolvedType::List(inner.clone());
+                        }
                         _ => {}
                     }
                 }
@@ -2525,5 +2554,68 @@ fn test_fn() -> String {
                 Box::new(ResolvedType::String)
             ),
         ));
+    }
+
+    #[test]
+    fn infer_list_builtin_int() {
+        let source = "let x: List<Int> = list(1, 2, 3)\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn infer_list_builtin_string() {
+        let source = "let x: List<String> = list(\"a\", \"b\")\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn infer_list_builtin_empty() {
+        let source = "let x: List<Int> = list()\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn infer_list_builtin_mixed_no_error() {
+        // mixed types infer as List (Unknown inner), compatible with any List<T>
+        let source = "let x: List<Int> = list(1, \"two\")\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn infer_list_type_mismatch() {
+        let source = "let x: List<String> = list(1, 2, 3)\n";
+        let diags = parse_and_check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("List<String>"));
+        assert!(diags[0].message.contains("List<Int>"));
+    }
+
+    #[test]
+    fn infer_split_returns_list_string() {
+        let source = "let x: List<Int> = \"hello\".split(\",\")\n";
+        let diags = parse_and_check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("List<Int>"));
+        assert!(diags[0].message.contains("List<String>"));
+    }
+
+    #[test]
+    fn infer_list_first_returns_element_type() {
+        let source = "let x: String = list(1, 2, 3).first()\n";
+        let diags = parse_and_check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("String"));
+        assert!(diags[0].message.contains("Int"));
+    }
+
+    #[test]
+    fn infer_list_reverse_preserves_type() {
+        let source = "let x: List<Int> = list(1, 2, 3).reverse()\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
     }
 }
