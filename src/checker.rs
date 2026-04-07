@@ -1043,6 +1043,46 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            // Check 6: Field access validation
+            Expr::FieldAccess { object, field } => {
+                self.check_expr(object);
+                let obj_type = self.infer_expr(object);
+                match &obj_type {
+                    ResolvedType::Struct(type_name) => {
+                        if let Some(TypeDef::Struct { fields: def_fields }) =
+                            self.type_defs.get(type_name)
+                        {
+                            if !def_fields.iter().any(|(n, _)| n == field) {
+                                let available: Vec<&str> =
+                                    def_fields.iter().map(|(n, _)| n.as_str()).collect();
+                                self.emit(
+                                    Severity::Error,
+                                    &None,
+                                    format!(
+                                        "Type '{}' has no field '{}'. Available: {}",
+                                        type_name,
+                                        field,
+                                        available.join(", ")
+                                    ),
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                    ResolvedType::Int
+                    | ResolvedType::Float
+                    | ResolvedType::Bool
+                    | ResolvedType::Nothing => {
+                        self.emit(
+                            Severity::Error,
+                            &None,
+                            format!("Cannot access field '{}' on {}", field, obj_type),
+                            None,
+                        );
+                    }
+                    _ => {} // Unknown, Map, List, etc. — don't warn
+                }
+            }
             _ => {}
         }
     }
@@ -1109,6 +1149,19 @@ impl<'a> Checker<'a> {
                 } else {
                     ResolvedType::Unknown
                 }
+            }
+            Expr::FieldAccess { object, field } => {
+                let obj_type = self.infer_expr(object);
+                if let ResolvedType::Struct(type_name) = &obj_type {
+                    if let Some(TypeDef::Struct { fields: def_fields }) =
+                        self.type_defs.get(type_name)
+                    {
+                        if let Some((_, field_type)) = def_fields.iter().find(|(n, _)| n == field) {
+                            return field_type.clone();
+                        }
+                    }
+                }
+                ResolvedType::Unknown
             }
             Expr::Respond { .. } => ResolvedType::Nothing,
             Expr::Send { body } => self.infer_expr(body),
@@ -1801,6 +1854,85 @@ fn make() -> Profile {
             .filter(|d| d.severity == Severity::Error)
             .collect();
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn field_access_nonexistent_field() {
+        let source = r#"
+type User { name: String, age: Int }
+intent "test"
+fn test_fn() -> String {
+  let u: User = User { name: "Alice", age: 30 }
+  u.email
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("no field 'email'"));
+        assert!(errors[0].message.contains("name, age"));
+    }
+
+    #[test]
+    fn field_access_valid() {
+        let source = r#"
+type User { name: String, age: Int }
+intent "test"
+fn test_fn() -> String {
+  let u: User = User { name: "Alice", age: 30 }
+  u.name
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn field_access_type_propagation() {
+        // u.name is String, assigning to Int should error
+        let source = r#"
+type User { name: String, age: Int }
+intent "test"
+fn test_fn() -> Int {
+  let u: User = User { name: "Alice", age: 30 }
+  let n: Int = u.name
+  n
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("Int"));
+        assert!(errors[0].message.contains("String"));
+    }
+
+    #[test]
+    fn field_access_on_primitive() {
+        let source = r#"
+intent "test"
+fn test_fn() -> Int {
+  let x: Int = 42
+  x.name
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("Cannot access field"));
+        assert!(errors[0].message.contains("Int"));
     }
 
     #[test]
