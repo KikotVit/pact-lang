@@ -957,6 +957,92 @@ impl<'a> Checker<'a> {
                 self.check_expr(status);
                 self.check_expr(body);
             }
+            // Check 5: Struct literal field validation
+            Expr::StructLiteral {
+                name: Some(type_name),
+                fields,
+            } => {
+                // Recurse into field values first
+                for field in fields {
+                    match field {
+                        StructField::Named { value, .. } => self.check_expr(value),
+                        StructField::Spread(expr) => self.check_expr(expr),
+                    }
+                }
+                if let Some(TypeDef::Struct { fields: def_fields }) = self.type_defs.get(type_name)
+                {
+                    let def_fields = def_fields.clone();
+                    let has_spread = fields.iter().any(|f| matches!(f, StructField::Spread(_)));
+
+                    for field in fields {
+                        if let StructField::Named { name, value } = field {
+                            if let Some((_, expected_type)) =
+                                def_fields.iter().find(|(n, _)| n == name)
+                            {
+                                // Check field value type
+                                let actual = self.infer_expr(value);
+                                if !Self::types_compatible(expected_type, &actual) {
+                                    self.emit(
+                                        Severity::Error,
+                                        &None,
+                                        format!(
+                                            "Field '{}' of {} expects {}, got {}",
+                                            name, type_name, expected_type, actual
+                                        ),
+                                        None,
+                                    );
+                                }
+                            } else {
+                                // Unknown field
+                                let available: Vec<&str> =
+                                    def_fields.iter().map(|(n, _)| n.as_str()).collect();
+                                self.emit(
+                                    Severity::Error,
+                                    &None,
+                                    format!(
+                                        "Unknown field '{}' on type {}. Available: {}",
+                                        name,
+                                        type_name,
+                                        available.join(", ")
+                                    ),
+                                    None,
+                                );
+                            }
+                        }
+                    }
+
+                    // Check missing required fields (skip if spread present)
+                    if !has_spread {
+                        let provided: Vec<&str> = fields
+                            .iter()
+                            .filter_map(|f| match f {
+                                StructField::Named { name, .. } => Some(name.as_str()),
+                                _ => None,
+                            })
+                            .collect();
+                        let missing: Vec<&str> = def_fields
+                            .iter()
+                            .filter(|(name, typ)| {
+                                !provided.contains(&name.as_str())
+                                    && !matches!(typ, ResolvedType::Optional(_))
+                            })
+                            .map(|(name, _)| name.as_str())
+                            .collect();
+                        if !missing.is_empty() {
+                            self.emit(
+                                Severity::Error,
+                                &None,
+                                format!(
+                                    "Missing required field(s) on {}: {}",
+                                    type_name,
+                                    missing.join(", ")
+                                ),
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1623,6 +1709,98 @@ mod tests {
         assert!(diags[0].message.contains("Parse error"));
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn struct_literal_field_type_mismatch() {
+        let source = r#"
+type User { name: String, age: Int }
+intent "test"
+fn make() -> User {
+  User { name: "Alice", age: "thirty" }
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("age"));
+        assert!(errors[0].message.contains("Int"));
+        assert!(errors[0].message.contains("String"));
+    }
+
+    #[test]
+    fn struct_literal_unknown_field() {
+        let source = r#"
+type User { name: String, age: Int }
+intent "test"
+fn make() -> User {
+  User { name: "Alice", age: 30, email: "x" }
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("Unknown field"));
+        assert!(errors[0].message.contains("email"));
+    }
+
+    #[test]
+    fn struct_literal_missing_required_field() {
+        let source = r#"
+type User { name: String, age: Int }
+intent "test"
+fn make() -> User {
+  User { name: "Alice" }
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("Missing required"));
+        assert!(errors[0].message.contains("age"));
+    }
+
+    #[test]
+    fn struct_literal_valid_no_errors() {
+        let source = r#"
+type User { name: String, age: Int }
+intent "test"
+fn make() -> User {
+  User { name: "Alice", age: 30 }
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn struct_literal_optional_field_can_be_omitted() {
+        let source = r#"
+type Profile { name: String, bio: Optional<String> }
+intent "test"
+fn make() -> Profile {
+  Profile { name: "Alice" }
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty());
     }
 
     #[test]
