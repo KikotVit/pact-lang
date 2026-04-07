@@ -256,9 +256,31 @@ pact test users.pact
 | `pact lsp` | Start LSP server (stdio, for editor integration) |
 | `pact mcp` | Start MCP tool server (stdio) |
 
+## Editor support
+
+### VS Code
+
+Install the extension from `.vsix`:
+
+```sh
+cd editors/vscode
+npm install
+npx tsc -p ./
+npx @vscode/vsce package
+code --install-extension pact-lang-0.1.0.vsix
+```
+
+Features: syntax highlighting, real-time diagnostics (type errors, missing fields, effect warnings), hover information, autocomplete (keywords, effects, pipeline steps).
+
+The extension auto-discovers the `pact` binary in `~/bin/pact`, `~/.local/bin/pact`, `/usr/local/bin/pact`, or workspace `target/release/pact`. Or set `pact.path` in VS Code settings.
+
+### Other editors
+
+Any editor with LSP support works. Run `pact lsp` as a stdio language server.
+
 ## Status
 
-PACT is v0.4. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
+PACT is v0.5. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
 What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, JWT auth, module/import system, validation constraints, deep type checker (struct fields, field access, operators, effects, methods), code formatter, LSP server, built-in MCP server (5 tools), built-in documentation, VS Code extension, CLI (`pact run`, `pact init`, `pact fmt`, `pact test`, `pact check`, `pact lsp`, `pact docs`), 470+ tests.
 
