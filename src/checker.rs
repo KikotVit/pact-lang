@@ -783,6 +783,36 @@ impl<'a> Checker<'a> {
                         )),
                     );
                 }
+                // Check list() element types against annotated List<T>
+                if let ResolvedType::List(expected_inner) = &expected {
+                    if !matches!(expected_inner.as_ref(), ResolvedType::Unknown) {
+                        if let Expr::FnCall { callee, args, .. } = value {
+                            if let Expr::Identifier(fn_name) = callee.as_ref() {
+                                if fn_name == "list" {
+                                    for (i, arg) in args.iter().enumerate() {
+                                        let arg_type = self.infer_expr(arg);
+                                        if !matches!(arg_type, ResolvedType::Unknown)
+                                            && !Self::types_compatible(expected_inner, &arg_type)
+                                        {
+                                            self.emit(
+                                                Severity::Error,
+                                                span,
+                                                format!(
+                                                    "List<{}> element at position {} has type {}",
+                                                    expected_inner, i, arg_type
+                                                ),
+                                                Some(format!(
+                                                    "All elements must be {} to match List<{}>",
+                                                    expected_inner, expected_inner
+                                                )),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // Check nested expressions (e.g. FnCall args in the value)
                 self.check_expr(value);
                 // Bind regardless so later lookups work
@@ -2578,18 +2608,22 @@ fn test_fn() -> String {
     }
 
     #[test]
-    fn infer_list_builtin_mixed_no_error() {
-        // mixed types infer as List (Unknown inner), compatible with any List<T>
+    fn infer_list_builtin_mixed_element_error() {
+        // mixed types: list(1, "two") with List<Int> annotation catches "two" at position 1
         let source = "let x: List<Int> = list(1, \"two\")\n";
         let diags = parse_and_check(source);
-        assert!(diags.is_empty());
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("position 1"));
+        assert!(diags[0].message.contains("String"));
     }
 
     #[test]
     fn infer_list_type_mismatch() {
+        // list(1, 2, 3) infers as List<Int>, mismatches List<String>
+        // also each element (Int) mismatches expected String — 4 total
         let source = "let x: List<String> = list(1, 2, 3)\n";
         let diags = parse_and_check(source);
-        assert_eq!(diags.len(), 1);
+        assert_eq!(diags.len(), 4);
         assert!(diags[0].message.contains("List<String>"));
         assert!(diags[0].message.contains("List<Int>"));
     }
@@ -2617,5 +2651,49 @@ fn test_fn() -> String {
         let source = "let x: List<Int> = list(1, 2, 3).reverse()\n";
         let diags = parse_and_check(source);
         assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn validate_list_element_type_mismatch() {
+        let source = "let x: List<Int> = list(1, \"two\", 3)\n";
+        let diags = parse_and_check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("position 1"));
+        assert!(diags[0].message.contains("String"));
+    }
+
+    #[test]
+    fn validate_list_elements_all_match() {
+        let source = "let x: List<Int> = list(1, 2, 3)\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn validate_list_bare_no_element_check() {
+        // bare List (no type param) should not check elements
+        let source = "let x: List = list(1, \"two\")\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn validate_list_empty_no_error() {
+        let source = "let x: List<Int> = list()\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn validate_list_multiple_bad_elements() {
+        let source = "let x: List<Int> = list(\"a\", \"b\", 3)\n";
+        let diags = parse_and_check(source);
+        // two errors: position 0 and position 1 are String, plus one type mismatch (List<String> vs List<Int>)
+        // Actually: list("a", "b", 3) infers as List(Unknown) due to mixed types
+        // so types_compatible(List<Int>, List(Unknown)) = true — no mismatch error
+        // but element validation catches "a" at pos 0 and "b" at pos 1
+        assert_eq!(diags.len(), 2);
+        assert!(diags[0].message.contains("position 0"));
+        assert!(diags[1].message.contains("position 1"));
     }
 }
