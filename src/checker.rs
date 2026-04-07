@@ -100,6 +100,8 @@ struct FnSig {
     return_type: ResolvedType,
 }
 
+const KNOWN_EFFECTS: &[&str] = &["db", "auth", "log", "time", "rng", "env", "http"];
+
 struct Checker<'a> {
     source: &'a str,
     scopes: Vec<HashMap<std::string::String, ResolvedType>>,
@@ -107,6 +109,7 @@ struct Checker<'a> {
     type_defs: HashMap<std::string::String, TypeDef>,
     diagnostics: Vec<Diagnostic>,
     current_fn_return: Option<ResolvedType>,
+    current_fn_effects: Option<Vec<std::string::String>>,
     base_dir: Option<PathBuf>,
     module_type_cache: HashMap<
         PathBuf,
@@ -127,6 +130,7 @@ impl<'a> Checker<'a> {
             type_defs: HashMap::new(),
             diagnostics: Vec::new(),
             current_fn_return: None,
+            current_fn_effects: None,
             base_dir,
             module_type_cache: HashMap::new(),
             loading_modules: HashSet::new(),
@@ -733,6 +737,7 @@ impl<'a> Checker<'a> {
                 params,
                 return_type,
                 error_types,
+                effects,
                 body,
                 span,
                 ..
@@ -750,7 +755,9 @@ impl<'a> Checker<'a> {
                     ResolvedType::Nothing
                 };
                 let prev_fn_return = self.current_fn_return.take();
+                let prev_fn_effects = self.current_fn_effects.take();
                 self.current_fn_return = Some(resolved_return.clone());
+                self.current_fn_effects = Some(effects.clone());
                 self.push_scope();
                 // Bind params
                 for p in params {
@@ -783,6 +790,7 @@ impl<'a> Checker<'a> {
                 }
                 self.pop_scope();
                 self.current_fn_return = prev_fn_return;
+                self.current_fn_effects = prev_fn_effects;
             }
             // Check 3: Explicit return
             Statement::Return { value, span, .. } => {
@@ -808,11 +816,14 @@ impl<'a> Checker<'a> {
                 }
             }
             // Check route body
-            Statement::Route { body, .. } | Statement::Stream { body, .. } => {
+            Statement::Route { effects, body, .. } | Statement::Stream { effects, body, .. } => {
+                let prev_fn_effects = self.current_fn_effects.take();
+                self.current_fn_effects = Some(effects.clone());
                 self.push_scope();
                 self.bind("request".to_string(), ResolvedType::Unknown);
                 self.check_statements(body);
                 self.pop_scope();
+                self.current_fn_effects = prev_fn_effects;
             }
             // Recurse into expressions for Check 2 and Check 4
             Statement::Expression(expr) => {
@@ -859,6 +870,8 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
+                // Check callee (for FieldAccess effect checks, etc.)
+                self.check_expr(callee);
                 // Also check nested expressions in args
                 for arg in args {
                     self.check_expr(arg);
@@ -1112,8 +1125,29 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            // Check 6: Field access validation
+            // Check 6: Field access validation + Check 9: effect usage
             Expr::FieldAccess { object, field } => {
+                // Check 9: effect usage without needs
+                if let Expr::Identifier(name) = object.as_ref() {
+                    if KNOWN_EFFECTS.contains(&name.as_str()) {
+                        if let Some(ref declared) = self.current_fn_effects {
+                            if !declared.iter().any(|e| e == name) {
+                                self.emit(
+                                    Severity::Warning,
+                                    &None,
+                                    format!(
+                                        "Effect '{}' used without 'needs {}' declaration",
+                                        name, name
+                                    ),
+                                    Some(format!(
+                                        "Add 'needs {}' to the function or route signature",
+                                        name
+                                    )),
+                                );
+                            }
+                        }
+                    }
+                }
                 self.check_expr(object);
                 let obj_type = self.infer_expr(object);
                 match &obj_type {
@@ -1149,7 +1183,7 @@ impl<'a> Checker<'a> {
                             None,
                         );
                     }
-                    _ => {} // Unknown, Map, List, etc. — don't warn
+                    _ => {} // Unknown, Map, List, effect, etc. — don't warn
                 }
             }
             _ => {}
@@ -2077,6 +2111,75 @@ fn test_fn() -> Bool {
                 .iter()
                 .any(|e| e.message.contains("Cannot apply 'not'"))
         );
+    }
+
+    #[test]
+    fn effect_without_needs_warns() {
+        let source = r#"
+intent "test"
+fn bad() -> String {
+  time.now()
+}
+"#;
+        let diags = parse_and_check(source);
+        let warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .collect();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("needs time"));
+    }
+
+    #[test]
+    fn effect_with_needs_no_warning() {
+        let source = r#"
+intent "test"
+fn good() -> String
+  needs time
+{
+  time.now()
+}
+"#;
+        let diags = parse_and_check(source);
+        let warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .collect();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn effect_in_route_without_needs_warns() {
+        let source = r#"
+intent "list"
+route GET "/items" {
+  db.query("items")
+}
+"#;
+        let diags = parse_and_check(source);
+        let warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .collect();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("needs db"));
+    }
+
+    #[test]
+    fn effect_in_route_with_needs_no_warning() {
+        let source = r#"
+intent "list"
+route GET "/items" {
+  needs db
+  db.query("items")
+}
+"#;
+        let diags = parse_and_check(source);
+        let warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .collect();
+        assert!(warnings.is_empty());
     }
 
     #[test]
