@@ -2696,4 +2696,43 @@ fn test_fn() -> String {
         assert!(diags[0].message.contains("position 0"));
         assert!(diags[1].message.contains("position 1"));
     }
+
+    #[test]
+    fn fn_param_generic_list_ok() {
+        let source = "intent \"sum\"\nfn sum_all(nums: List<Int>) -> Int { 0 }\nlet x: Int = sum_all(list(1, 2))\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn fn_param_generic_list_mismatch() {
+        let source = "intent \"sum\"\nfn sum_all(nums: List<Int>) -> Int { 0 }\nlet x: Int = sum_all(list(\"a\"))\n";
+        let diags = parse_and_check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("List<Int>"));
+        assert!(diags[0].message.contains("List<String>"));
+    }
+
+    #[test]
+    fn fn_return_generic_list_ok() {
+        let source = "intent \"make nums\"\nfn make_nums() -> List<Int> { list(1, 2, 3) }\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn fn_return_generic_list_mismatch() {
+        let source = "intent \"make nums\"\nfn make_nums() -> List<Int> { list(\"a\", \"b\") }\n";
+        let diags = parse_and_check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("List<Int>"));
+        assert!(diags[0].message.contains("List<String>"));
+    }
+
+    #[test]
+    fn fn_return_split_matches_list_string() {
+        let source = "intent \"parts\"\nfn get_parts() -> List<String> { \"a,b\".split(\",\") }\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
 }
