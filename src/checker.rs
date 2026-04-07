@@ -870,6 +870,64 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
+                // Check 10: Method calls on wrong types
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    let obj_type = self.infer_expr(object);
+                    match &obj_type {
+                        ResolvedType::String => {
+                            const STRING_METHODS: &[&str] = &[
+                                "length",
+                                "contains",
+                                "to_upper",
+                                "to_lower",
+                                "trim",
+                                "split",
+                                "starts_with",
+                                "ends_with",
+                                "replace",
+                            ];
+                            if !STRING_METHODS.contains(&field.as_str()) {
+                                self.emit(
+                                    Severity::Error,
+                                    span,
+                                    format!(
+                                        "String has no method '{}'. Available: {}",
+                                        field,
+                                        STRING_METHODS.join(", ")
+                                    ),
+                                    None,
+                                );
+                            }
+                        }
+                        ResolvedType::List => {
+                            const LIST_METHODS: &[&str] = &[
+                                "length", "contains", "push", "get", "join", "is_empty", "first",
+                                "last", "reverse",
+                            ];
+                            if !LIST_METHODS.contains(&field.as_str()) {
+                                self.emit(
+                                    Severity::Error,
+                                    span,
+                                    format!(
+                                        "List has no method '{}'. Available: {}",
+                                        field,
+                                        LIST_METHODS.join(", ")
+                                    ),
+                                    None,
+                                );
+                            }
+                        }
+                        ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool => {
+                            self.emit(
+                                Severity::Error,
+                                span,
+                                format!("{} has no methods", obj_type),
+                                Some("Methods are available on String and List values".to_string()),
+                            );
+                        }
+                        _ => {} // Unknown, Struct, effect — skip
+                    }
+                }
                 // Check callee (for FieldAccess effect checks, etc.)
                 self.check_expr(callee);
                 // Also check nested expressions in args
@@ -1202,6 +1260,24 @@ impl<'a> Checker<'a> {
                 if let Expr::Identifier(name) = callee.as_ref() {
                     if let Some(sig) = self.fn_sigs.get(name) {
                         return sig.return_type.clone();
+                    }
+                }
+                // Method call return types
+                if let Expr::FieldAccess { object, field } = callee.as_ref() {
+                    let obj_type = self.infer_expr(object);
+                    match (&obj_type, field.as_str()) {
+                        (ResolvedType::String, "length") => return ResolvedType::Int,
+                        (ResolvedType::String, "contains" | "starts_with" | "ends_with") => {
+                            return ResolvedType::Bool;
+                        }
+                        (ResolvedType::String, "to_upper" | "to_lower" | "trim" | "replace") => {
+                            return ResolvedType::String;
+                        }
+                        (ResolvedType::String, "split") => return ResolvedType::List,
+                        (ResolvedType::List, "length") => return ResolvedType::Int,
+                        (ResolvedType::List, "contains" | "is_empty") => return ResolvedType::Bool,
+                        (ResolvedType::List, "join") => return ResolvedType::String,
+                        _ => {}
                     }
                 }
                 ResolvedType::Unknown
@@ -2180,6 +2256,80 @@ route GET "/items" {
             .filter(|d| d.severity == Severity::Warning)
             .collect();
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn method_call_on_int() {
+        let source = r#"
+intent "test"
+fn test_fn() -> Int {
+  let x: Int = 42
+  x.length()
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.iter().any(|e| e.message.contains("has no methods")));
+    }
+
+    #[test]
+    fn method_call_unknown_string_method() {
+        let source = r#"
+intent "test"
+fn test_fn() -> String {
+  let s: String = "hello"
+  s.banana()
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("no method 'banana'"))
+        );
+    }
+
+    #[test]
+    fn method_call_valid_string_length() {
+        let source = r#"
+intent "test"
+fn test_fn() -> Int {
+  let s: String = "hello"
+  s.length()
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn method_return_type_inferred() {
+        // s.length() returns Int, assigning to String should error
+        let source = r#"
+intent "test"
+fn test_fn() -> String {
+  let s: String = "hello"
+  let n: String = s.length()
+  n
+}
+"#;
+        let diags = parse_and_check(source);
+        let errors: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.iter().any(|e| e.message.contains("Int")));
     }
 
     #[test]
