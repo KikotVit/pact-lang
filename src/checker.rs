@@ -48,8 +48,8 @@ enum ResolvedType {
     String,
     Bool,
     Nothing,
-    List,
-    Map,
+    List(Box<ResolvedType>),
+    Map(Box<ResolvedType>, Box<ResolvedType>),
     Struct(std::string::String),
     Optional(Box<ResolvedType>),
     Result {
@@ -67,8 +67,20 @@ impl fmt::Display for ResolvedType {
             ResolvedType::String => write!(f, "String"),
             ResolvedType::Bool => write!(f, "Bool"),
             ResolvedType::Nothing => write!(f, "Nothing"),
-            ResolvedType::List => write!(f, "List"),
-            ResolvedType::Map => write!(f, "Map"),
+            ResolvedType::List(inner) => {
+                if matches!(inner.as_ref(), ResolvedType::Unknown) {
+                    write!(f, "List")
+                } else {
+                    write!(f, "List<{}>", inner)
+                }
+            }
+            ResolvedType::Map(k, v) => {
+                if matches!(k.as_ref(), ResolvedType::Unknown) {
+                    write!(f, "Map")
+                } else {
+                    write!(f, "Map<{}, {}>", k, v)
+                }
+            }
             ResolvedType::Struct(name) => write!(f, "{}", name),
             ResolvedType::Optional(inner) => write!(f, "{}?", inner),
             ResolvedType::Result { ok, errors } => {
@@ -147,8 +159,11 @@ impl<'a> Checker<'a> {
                 "String" => ResolvedType::String,
                 "Bool" => ResolvedType::Bool,
                 "Nothing" => ResolvedType::Nothing,
-                "List" => ResolvedType::List,
-                "Map" => ResolvedType::Map,
+                "List" => ResolvedType::List(Box::new(ResolvedType::Unknown)),
+                "Map" => ResolvedType::Map(
+                    Box::new(ResolvedType::Unknown),
+                    Box::new(ResolvedType::Unknown),
+                ),
                 other => {
                     if self.type_defs.contains_key(other) {
                         ResolvedType::Struct(other.to_string())
@@ -158,8 +173,11 @@ impl<'a> Checker<'a> {
                 }
             },
             TypeExpr::Generic { name, .. } => match name.as_str() {
-                "List" => ResolvedType::List,
-                "Map" => ResolvedType::Map,
+                "List" => ResolvedType::List(Box::new(ResolvedType::Unknown)),
+                "Map" => ResolvedType::Map(
+                    Box::new(ResolvedType::Unknown),
+                    Box::new(ResolvedType::Unknown),
+                ),
                 _ => ResolvedType::Unknown,
             },
             TypeExpr::Optional(inner) => ResolvedType::Optional(Box::new(self.resolve_type(inner))),
@@ -180,8 +198,8 @@ impl<'a> Checker<'a> {
             (ResolvedType::String, ResolvedType::String) => true,
             (ResolvedType::Bool, ResolvedType::Bool) => true,
             (ResolvedType::Nothing, ResolvedType::Nothing) => true,
-            (ResolvedType::List, ResolvedType::List) => true,
-            (ResolvedType::Map, ResolvedType::Map) => true,
+            (ResolvedType::List(_), ResolvedType::List(_)) => true,
+            (ResolvedType::Map(_, _), ResolvedType::Map(_, _)) => true,
             (ResolvedType::Struct(a), ResolvedType::Struct(b)) => a == b,
             // Nothing is compatible with Optional(_)
             (ResolvedType::Optional(_), ResolvedType::Nothing) => true,
@@ -926,7 +944,7 @@ impl<'a> Checker<'a> {
                                 );
                             }
                         }
-                        ResolvedType::List => {
+                        ResolvedType::List(_) => {
                             const LIST_METHODS: &[&str] = &[
                                 "length", "contains", "push", "get", "join", "is_empty", "first",
                                 "last", "reverse",
@@ -1300,10 +1318,14 @@ impl<'a> Checker<'a> {
                         (ResolvedType::String, "to_upper" | "to_lower" | "trim" | "replace") => {
                             return ResolvedType::String;
                         }
-                        (ResolvedType::String, "split") => return ResolvedType::List,
-                        (ResolvedType::List, "length") => return ResolvedType::Int,
-                        (ResolvedType::List, "contains" | "is_empty") => return ResolvedType::Bool,
-                        (ResolvedType::List, "join") => return ResolvedType::String,
+                        (ResolvedType::String, "split") => {
+                            return ResolvedType::List(Box::new(ResolvedType::Unknown));
+                        }
+                        (ResolvedType::List(_), "length") => return ResolvedType::Int,
+                        (ResolvedType::List(_), "contains" | "is_empty") => {
+                            return ResolvedType::Bool;
+                        }
+                        (ResolvedType::List(_), "join") => return ResolvedType::String,
                         _ => {}
                     }
                 }
@@ -2393,5 +2415,41 @@ fn test_fn() -> String {
             .filter(|d| d.severity == Severity::Warning)
             .collect();
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn display_list_map_generic_types() {
+        assert_eq!(
+            format!("{}", ResolvedType::List(Box::new(ResolvedType::Unknown))),
+            "List"
+        );
+        assert_eq!(
+            format!("{}", ResolvedType::List(Box::new(ResolvedType::Int))),
+            "List<Int>"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                ResolvedType::Map(
+                    Box::new(ResolvedType::Unknown),
+                    Box::new(ResolvedType::Unknown)
+                )
+            ),
+            "Map"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                ResolvedType::Map(Box::new(ResolvedType::String), Box::new(ResolvedType::Int))
+            ),
+            "Map<String, Int>"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                ResolvedType::List(Box::new(ResolvedType::List(Box::new(ResolvedType::Int))))
+            ),
+            "List<List<Int>>"
+        );
     }
 }
