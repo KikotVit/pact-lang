@@ -172,12 +172,25 @@ impl<'a> Checker<'a> {
                     }
                 }
             },
-            TypeExpr::Generic { name, .. } => match name.as_str() {
-                "List" => ResolvedType::List(Box::new(ResolvedType::Unknown)),
-                "Map" => ResolvedType::Map(
-                    Box::new(ResolvedType::Unknown),
-                    Box::new(ResolvedType::Unknown),
-                ),
+            TypeExpr::Generic { name, args } => match name.as_str() {
+                "List" => {
+                    let inner = args
+                        .first()
+                        .map(|a| self.resolve_type(a))
+                        .unwrap_or(ResolvedType::Unknown);
+                    ResolvedType::List(Box::new(inner))
+                }
+                "Map" => {
+                    let key = args
+                        .first()
+                        .map(|a| self.resolve_type(a))
+                        .unwrap_or(ResolvedType::Unknown);
+                    let val = args
+                        .get(1)
+                        .map(|a| self.resolve_type(a))
+                        .unwrap_or(ResolvedType::Unknown);
+                    ResolvedType::Map(Box::new(key), Box::new(val))
+                }
                 _ => ResolvedType::Unknown,
             },
             TypeExpr::Optional(inner) => ResolvedType::Optional(Box::new(self.resolve_type(inner))),
@@ -2451,5 +2464,26 @@ fn test_fn() -> String {
             ),
             "List<List<Int>>"
         );
+    }
+
+    #[test]
+    fn resolve_generic_list_type() {
+        let source = "let x: List<Int> = list()\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn resolve_generic_map_type() {
+        let source = "let x: Map<String, Int> = {}\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn resolve_nested_generic_type() {
+        let source = "let x: List<List<Int>> = list()\n";
+        let diags = parse_and_check(source);
+        assert!(diags.is_empty());
     }
 }
