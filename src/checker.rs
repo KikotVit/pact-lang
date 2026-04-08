@@ -75,7 +75,9 @@ impl fmt::Display for ResolvedType {
                 }
             }
             ResolvedType::Map(k, v) => {
-                if matches!(k.as_ref(), ResolvedType::Unknown) {
+                if matches!(k.as_ref(), ResolvedType::Unknown)
+                    && matches!(v.as_ref(), ResolvedType::Unknown)
+                {
                     write!(f, "Map")
                 } else {
                     write!(f, "Map<{}, {}>", k, v)
@@ -772,7 +774,8 @@ impl<'a> Checker<'a> {
             } => {
                 let expected = self.resolve_type(type_ann);
                 let actual = self.infer_expr(value);
-                if !Self::types_compatible(&expected, &actual) {
+                let container_mismatch = !Self::types_compatible(&expected, &actual);
+                if container_mismatch {
                     self.emit(
                         Severity::Error,
                         span,
@@ -783,18 +786,23 @@ impl<'a> Checker<'a> {
                         )),
                     );
                 }
-                // Check list() element types against annotated List<T>
-                if let ResolvedType::List(expected_inner) = &expected {
-                    if !matches!(expected_inner.as_ref(), ResolvedType::Unknown) {
-                        if let Expr::FnCall { callee, args, .. } = value {
-                            if let Expr::Identifier(fn_name) = callee.as_ref() {
-                                if fn_name == "list" {
-                                    for (i, arg) in args.iter().enumerate() {
-                                        let arg_type = self.infer_expr(arg);
-                                        if !matches!(arg_type, ResolvedType::Unknown)
-                                            && !Self::types_compatible(expected_inner, &arg_type)
-                                        {
-                                            self.emit(
+                // Check list() element types only when container types match
+                // (catches mixed-element case where inferred type is Unknown)
+                if !container_mismatch {
+                    if let ResolvedType::List(expected_inner) = &expected {
+                        if !matches!(expected_inner.as_ref(), ResolvedType::Unknown) {
+                            if let Expr::FnCall { callee, args, .. } = value {
+                                if let Expr::Identifier(fn_name) = callee.as_ref() {
+                                    if fn_name == "list" {
+                                        for (i, arg) in args.iter().enumerate() {
+                                            let arg_type = self.infer_expr(arg);
+                                            if !matches!(arg_type, ResolvedType::Unknown)
+                                                && !Self::types_compatible(
+                                                    expected_inner,
+                                                    &arg_type,
+                                                )
+                                            {
+                                                self.emit(
                                                 Severity::Error,
                                                 span,
                                                 format!(
@@ -806,6 +814,7 @@ impl<'a> Checker<'a> {
                                                     expected_inner, expected_inner
                                                 )),
                                             );
+                                            }
                                         }
                                     }
                                 }
@@ -2620,10 +2629,10 @@ fn test_fn() -> String {
     #[test]
     fn infer_list_type_mismatch() {
         // list(1, 2, 3) infers as List<Int>, mismatches List<String>
-        // also each element (Int) mismatches expected String — 4 total
+        // only container mismatch reported, no redundant per-element errors
         let source = "let x: List<String> = list(1, 2, 3)\n";
         let diags = parse_and_check(source);
-        assert_eq!(diags.len(), 4);
+        assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("List<String>"));
         assert!(diags[0].message.contains("List<Int>"));
     }
