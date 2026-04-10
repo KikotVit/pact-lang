@@ -279,6 +279,38 @@ impl<'a> Checker<'a> {
             source_line,
         });
     }
+
+    fn check_list_elements(&mut self, expected: &ResolvedType, expr: &Expr, span: &Option<Span>) {
+        if let ResolvedType::List(expected_inner) = expected {
+            if !matches!(expected_inner.as_ref(), ResolvedType::Unknown) {
+                if let Expr::FnCall { callee, args, .. } = expr {
+                    if let Expr::Identifier(fn_name) = callee.as_ref() {
+                        if fn_name == "list" {
+                            for (i, arg) in args.iter().enumerate() {
+                                let arg_type = self.infer_expr(arg);
+                                if !matches!(arg_type, ResolvedType::Unknown)
+                                    && !Self::types_compatible(expected_inner, &arg_type)
+                                {
+                                    self.emit(
+                                        Severity::Error,
+                                        span,
+                                        format!(
+                                            "List<{}> element at position {} has type {}",
+                                            expected_inner, i, arg_type
+                                        ),
+                                        Some(format!(
+                                            "All elements must be {} to match List<{}>",
+                                            expected_inner, expected_inner
+                                        )),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Analyze a parsed program for type errors. Returns all diagnostics found.
@@ -789,40 +821,8 @@ impl<'a> Checker<'a> {
                     );
                 }
                 // Check list() element types only when container types match
-                // (catches mixed-element case where inferred type is Unknown)
                 if !container_mismatch {
-                    if let ResolvedType::List(expected_inner) = &expected {
-                        if !matches!(expected_inner.as_ref(), ResolvedType::Unknown) {
-                            if let Expr::FnCall { callee, args, .. } = value {
-                                if let Expr::Identifier(fn_name) = callee.as_ref() {
-                                    if fn_name == "list" {
-                                        for (i, arg) in args.iter().enumerate() {
-                                            let arg_type = self.infer_expr(arg);
-                                            if !matches!(arg_type, ResolvedType::Unknown)
-                                                && !Self::types_compatible(
-                                                    expected_inner,
-                                                    &arg_type,
-                                                )
-                                            {
-                                                self.emit(
-                                                Severity::Error,
-                                                span,
-                                                format!(
-                                                    "List<{}> element at position {} has type {}",
-                                                    expected_inner, i, arg_type
-                                                ),
-                                                Some(format!(
-                                                    "All elements must be {} to match List<{}>",
-                                                    expected_inner, expected_inner
-                                                )),
-                                            );
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    self.check_list_elements(&expected, value, span);
                 }
                 // Check nested expressions (e.g. FnCall args in the value)
                 self.check_expr(value);
@@ -873,7 +873,8 @@ impl<'a> Checker<'a> {
                             ResolvedType::Result { ok, .. } => ok.as_ref(),
                             other => other,
                         };
-                        if !Self::types_compatible(check_type, &actual) {
+                        let container_mismatch = !Self::types_compatible(check_type, &actual);
+                        if container_mismatch {
                             self.emit(
                                 Severity::Error,
                                 span,
@@ -883,6 +884,10 @@ impl<'a> Checker<'a> {
                                 ),
                                 None,
                             );
+                        }
+                        // Check list() element types against return List<T>
+                        if !container_mismatch {
+                            self.check_list_elements(check_type, expr, span);
                         }
                     }
                 }
@@ -898,7 +903,8 @@ impl<'a> Checker<'a> {
                         ResolvedType::Result { ok, .. } => ok.as_ref(),
                         other => other,
                     };
-                    if !Self::types_compatible(check_type, &actual) {
+                    let container_mismatch = !Self::types_compatible(check_type, &actual);
+                    if container_mismatch {
                         self.emit(
                             Severity::Error,
                             span,
@@ -908,6 +914,10 @@ impl<'a> Checker<'a> {
                             ),
                             None,
                         );
+                    }
+                    // Check list() element types against return List<T>
+                    if !container_mismatch {
+                        self.check_list_elements(check_type, val_expr, span);
                     }
                     // Check nested expressions (e.g. FnCall args in the value)
                     self.check_expr(val_expr);
@@ -2745,5 +2755,23 @@ fn test_fn() -> String {
         let source = "intent \"parts\"\nfn get_parts() -> List<String> { \"a,b\".split(\",\") }\n";
         let diags = parse_and_check(source);
         assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn fn_implicit_return_list_element_error() {
+        let source = "intent \"bad\"\nfn bad_list() -> List<Int> { list(1, \"two\", 3) }\n";
+        let diags = parse_and_check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("position 1"));
+        assert!(diags[0].message.contains("String"));
+    }
+
+    #[test]
+    fn fn_explicit_return_list_element_error() {
+        let source = "intent \"bad\"\nfn bad_list() -> List<Int> { return list(1, \"x\") }\n";
+        let diags = parse_and_check(source);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("position 1"));
+        assert!(diags[0].message.contains("String"));
     }
 }
