@@ -67,11 +67,11 @@ fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for i in 0..=a.len() {
-        dp[i][0] = i;
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i;
     }
-    for j in 0..=b.len() {
-        dp[0][j] = j;
+    for (j, val) in dp[0].iter_mut().enumerate() {
+        *val = j;
     }
     for i in 1..=a.len() {
         for j in 1..=b.len() {
@@ -1738,7 +1738,7 @@ impl Interpreter {
         };
 
         let body_json: Option<serde_json::Value> = if let Some(ref opts) = options {
-            opts.get("body").map(|v| value_to_json(v))
+            opts.get("body").map(value_to_json)
         } else {
             None
         };

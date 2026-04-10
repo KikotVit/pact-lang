@@ -116,6 +116,14 @@ struct FnSig {
 
 const KNOWN_EFFECTS: &[&str] = &["db", "auth", "log", "time", "rng", "env", "http"];
 
+type ModuleTypeCache = HashMap<
+    PathBuf,
+    (
+        HashMap<std::string::String, TypeDef>,
+        HashMap<std::string::String, FnSig>,
+    ),
+>;
+
 struct Checker<'a> {
     source: &'a str,
     scopes: Vec<HashMap<std::string::String, ResolvedType>>,
@@ -126,13 +134,7 @@ struct Checker<'a> {
     current_fn_effects: Option<Vec<std::string::String>>,
     current_stmt_span: Option<Span>,
     base_dir: Option<PathBuf>,
-    module_type_cache: HashMap<
-        PathBuf,
-        (
-            HashMap<std::string::String, TypeDef>,
-            HashMap<std::string::String, FnSig>,
-        ),
-    >,
+    module_type_cache: ModuleTypeCache,
     loading_modules: HashSet<PathBuf>,
 }
 

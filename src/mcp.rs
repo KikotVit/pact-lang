@@ -569,11 +569,7 @@ pub fn handle_message(msg: &serde_json::Value) -> Option<serde_json::Value> {
     let id = msg.get("id");
 
     // Notifications (no id) — process silently
-    if id.is_none() {
-        return None;
-    }
-
-    let id = id.unwrap();
+    let id = id?;
 
     match method {
         "initialize" => Some(handle_initialize(id)),
