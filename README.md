@@ -40,6 +40,12 @@ Notes listening on http://0.0.0.0:8080
 curl -fsSL https://raw.githubusercontent.com/KikotVit/pact-lang/master/scripts/install.sh | sh
 ```
 
+Or install to `~/bin` without sudo:
+
+```sh
+PACT_INSTALL_DIR=~/bin curl -fsSL https://raw.githubusercontent.com/KikotVit/pact-lang/master/scripts/install.sh | sh
+```
+
 macOS (ARM & Intel) and Linux x86_64. Single binary, ~5MB, zero runtime dependencies.
 
 Or with Docker:
