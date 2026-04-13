@@ -282,7 +282,7 @@ Any editor with LSP support works. Run `pact lsp` as a stdio language server.
 
 PACT is v0.5. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
-What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, JWT auth, module/import system, validation constraints, deep type checker (struct fields, field access, operators, effects, methods, generic types), code formatter, LSP server, built-in MCP server (5 tools), built-in documentation, VS Code extension, CLI (`pact run`, `pact init`, `pact fmt`, `pact test`, `pact check`, `pact lsp`, `pact docs`), 494+ tests.
+What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, JWT auth, module/import system, validation constraints, deep type checker (struct fields, field access, operators, effects, methods, generic types), code formatter, LSP server, built-in MCP server (5 tools), built-in documentation, VS Code extension, CLI (`pact run`, `pact init`, `pact fmt`, `pact test`, `pact check`, `pact lsp`, `pact docs`), 496+ tests.
 
 What's next: web playground.
 
