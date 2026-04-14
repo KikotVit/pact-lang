@@ -2355,6 +2355,12 @@ impl Interpreter {
                 name: "time.fixed".to_string(),
             },
         );
+        time_methods.insert(
+            "days_ago".to_string(),
+            Value::BuiltinFn {
+                name: "time.days_ago".to_string(),
+            },
+        );
         self.global.bind(
             "time".to_string(),
             Value::Effect {
@@ -2621,6 +2627,12 @@ impl Interpreter {
             "fixed".to_string(),
             Value::BuiltinFn {
                 name: "time.fixed".to_string(),
+            },
+        );
+        methods.insert(
+            "days_ago".to_string(),
+            Value::BuiltinFn {
+                name: "time.days_ago".to_string(),
             },
         );
         Value::Effect {
