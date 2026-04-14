@@ -1529,6 +1529,7 @@ impl Interpreter {
             "db.find" => self.builtin_db_find(args),
             "db.update" => self.builtin_db_update(args),
             "db.delete" => self.builtin_db_delete(args),
+            "db.delete_where" => self.builtin_db_delete_where(args),
             "db.watch" => self.builtin_db_watch(args),
             "time.now" => self.builtin_time_now(),
             "time.days_ago" => self.builtin_time_days_ago(args),
@@ -1626,7 +1627,7 @@ impl Interpreter {
             "http.delete" => self.builtin_http_request("DELETE", args),
             _ => {
                 let mut err = self.error(&format!("Unknown builtin '{}'", name));
-                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), db.watch(), time.now(), time.days_ago(), rng.uuid(), rng.hex(), rng.short_id(), log.info(), log.warn(), log.error(), auth.require(), auth.sign(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
+                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), db.delete_where(), db.watch(), time.now(), time.days_ago(), rng.uuid(), rng.hex(), rng.short_id(), log.info(), log.warn(), log.error(), auth.require(), auth.sign(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
                 Err(err)
             }
         }
@@ -1940,6 +1941,21 @@ impl Interpreter {
             _ => return Err(self.error("db.delete second argument must be a String id")),
         };
         self.db.delete(&table_name, &id)
+    }
+
+    fn builtin_db_delete_where(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        if args.len() != 2 {
+            return Err(
+                self.error("db.delete_where expects 2 arguments: table name, filter struct")
+            );
+        }
+        let table_name = match &args[0] {
+            Value::String(s) => s.clone(),
+            _ => {
+                return Err(self.error("db.delete_where first argument must be a String table name"));
+            }
+        };
+        self.db.delete_where(&table_name, &args[1])
     }
 
     fn builtin_db_watch(&mut self, args: Vec<Value>) -> Result<Value, RuntimeError> {
@@ -2274,6 +2290,12 @@ impl Interpreter {
             },
         );
         db_methods.insert(
+            "delete_where".to_string(),
+            Value::BuiltinFn {
+                name: "db.delete_where".to_string(),
+            },
+        );
+        db_methods.insert(
             "watch".to_string(),
             Value::BuiltinFn {
                 name: "db.watch".to_string(),
@@ -2536,6 +2558,12 @@ impl Interpreter {
             "memory".to_string(),
             Value::BuiltinFn {
                 name: "db.memory".to_string(),
+            },
+        );
+        methods.insert(
+            "delete_where".to_string(),
+            Value::BuiltinFn {
+                name: "db.delete_where".to_string(),
             },
         );
         methods.insert(
@@ -4827,6 +4855,45 @@ user.nme"#;
             }
             other => panic!("Expected DbWatch, got: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_db_delete_where_before() {
+        let result = eval_with_effects(
+            r#"
+            using db = db.memory()
+            using time = time.fixed("2026-04-14T12:00:00Z")
+            db.insert("items", { id: "1", name: "old", created_at: "2026-04-01T00:00:00Z" })
+            db.insert("items", { id: "2", name: "new", created_at: "2026-04-13T00:00:00Z" })
+            db.delete_where("items", { before: "2026-04-10T00:00:00Z" })
+        "#,
+        );
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn test_db_delete_where_keeps_recent() {
+        let result = eval_with_effects(
+            r#"
+            using db = db.memory()
+            db.insert("items", { id: "1", name: "old", created_at: "2026-04-01T00:00:00Z" })
+            db.insert("items", { id: "2", name: "new", created_at: "2026-04-13T00:00:00Z" })
+            db.delete_where("items", { before: "2026-04-10T00:00:00Z" })
+            db.query("items") | count
+        "#,
+        );
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn test_db_delete_where_empty_table() {
+        let result = eval_with_effects(
+            r#"
+            using db = db.memory()
+            db.delete_where("nonexistent", { before: "2026-04-10T00:00:00Z" })
+        "#,
+        );
+        assert_eq!(result, Value::Int(0));
     }
 
     #[test]

@@ -604,6 +604,65 @@ impl DbBackend {
             }
         }
     }
+
+    /// Delete rows where `created_at` < the `before` value in the filter.
+    /// Returns the count of deleted rows.
+    pub fn delete_where(&mut self, table: &str, filter: &Value) -> Result<Value, RuntimeError> {
+        let before = match filter {
+            Value::Struct { fields, .. } => match fields.get("before") {
+                Some(Value::String(s)) => s.clone(),
+                _ => {
+                    return Err(RuntimeError {
+                        message:
+                            "db.delete_where filter must have a 'before' key with String value"
+                                .to_string(),
+                        line: 0,
+                        column: 0,
+                        source_line: String::new(),
+                        hint: None,
+                    });
+                }
+            },
+            _ => {
+                return Err(RuntimeError {
+                    message: "db.delete_where second argument must be a Struct filter".to_string(),
+                    line: 0,
+                    column: 0,
+                    source_line: String::new(),
+                    hint: None,
+                });
+            }
+        };
+
+        match self {
+            DbBackend::Memory { tables } => {
+                if let Some(rows) = tables.get_mut(table) {
+                    let before_count = rows.len();
+                    rows.retain(|row| {
+                        if let Value::Struct { fields, .. } = row {
+                            if let Some(Value::String(created)) = fields.get("created_at") {
+                                return created.as_str() >= before.as_str();
+                            }
+                        }
+                        true // keep rows without created_at
+                    });
+                    Ok(Value::Int((before_count - rows.len()) as i64))
+                } else {
+                    Ok(Value::Int(0))
+                }
+            }
+            DbBackend::Sqlite { conn, schemas } => {
+                if schemas.get(table).is_none() {
+                    return Ok(Value::Int(0));
+                }
+                let sql = format!("DELETE FROM \"{}\" WHERE \"created_at\" < ?", table);
+                match conn.execute(&sql, rusqlite::params![before]) {
+                    Ok(count) => Ok(Value::Int(count as i64)),
+                    Err(e) => Ok(db_value_error(&format!("delete_where on '{}'", table), e)),
+                }
+            }
+        }
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
