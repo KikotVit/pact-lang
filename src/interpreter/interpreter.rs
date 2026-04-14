@@ -1534,6 +1534,7 @@ impl Interpreter {
             "time.days_ago" => self.builtin_time_days_ago(args),
             "rng.uuid" => self.builtin_rng_uuid(),
             "rng.hex" => self.builtin_rng_hex(args),
+            "rng.short_id" => self.builtin_rng_short_id(),
             "time.fixed" => {
                 if let Some(Value::String(dt)) = args.first() {
                     self.fixed_time = Some(dt.clone());
@@ -1625,7 +1626,7 @@ impl Interpreter {
             "http.delete" => self.builtin_http_request("DELETE", args),
             _ => {
                 let mut err = self.error(&format!("Unknown builtin '{}'", name));
-                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), db.watch(), time.now(), time.days_ago(), rng.uuid(), rng.hex(), log.info(), log.warn(), log.error(), auth.require(), auth.sign(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
+                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), db.watch(), time.now(), time.days_ago(), rng.uuid(), rng.hex(), rng.short_id(), log.info(), log.warn(), log.error(), auth.require(), auth.sign(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
                 Err(err)
             }
         }
@@ -2213,6 +2214,24 @@ impl Interpreter {
         Ok(Value::String(hex))
     }
 
+    fn builtin_rng_short_id(&mut self) -> Result<Value, RuntimeError> {
+        if let Some(val) = self.next_from_sequence() {
+            return Ok(Value::String(val));
+        }
+        self.rng_counter += 1;
+        let seed = self.rng_seed.unwrap_or(42);
+        let mut value = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(self.rng_counter);
+        let chars: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+        let mut id = String::with_capacity(8);
+        for _ in 0..8 {
+            value = value.wrapping_mul(6364136223846793005).wrapping_add(1);
+            id.push(chars[((value >> 32) as usize) % chars.len()] as char);
+        }
+        Ok(Value::String(id))
+    }
+
     // --- Effect setup ---
 
     pub fn setup_test_effects(&mut self) {
@@ -2304,6 +2323,12 @@ impl Interpreter {
             "hex".to_string(),
             Value::BuiltinFn {
                 name: "rng.hex".to_string(),
+            },
+        );
+        rng_methods.insert(
+            "short_id".to_string(),
+            Value::BuiltinFn {
+                name: "rng.short_id".to_string(),
             },
         );
         rng_methods.insert(
@@ -2557,6 +2582,12 @@ impl Interpreter {
             "hex".to_string(),
             Value::BuiltinFn {
                 name: "rng.hex".to_string(),
+            },
+        );
+        methods.insert(
+            "short_id".to_string(),
+            Value::BuiltinFn {
+                name: "rng.short_id".to_string(),
             },
         );
         methods.insert(
@@ -5057,5 +5088,27 @@ x
         let interp = Interpreter::new("");
         let result = interp.builtin_time_days_ago(vec![]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rng_short_id_deterministic() {
+        let result = eval_with_effects("using rng = rng.deterministic(42)\nrng.short_id()");
+        if let Value::String(s) = result {
+            assert_eq!(s.len(), 8, "short_id should be 8 chars, got: {}", s);
+            assert!(
+                s.chars().all(|c| c.is_ascii_alphanumeric()),
+                "Should be alphanumeric: {}",
+                s
+            );
+        } else {
+            panic!("Expected String, got: {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_rng_short_id_sequence() {
+        let result =
+            eval_with_effects("using rng = rng.sequence(list(\"abc123\"))\nrng.short_id()");
+        assert_eq!(result, Value::String("abc123".to_string()));
     }
 }
