@@ -27,7 +27,7 @@ pub enum TokenKind {
     InterpolationStart,
     InterpolationEnd,
 
-    // Keywords (24 reserved)
+    // Keywords (25 reserved)
     Fn,
     Let,
     Var,
@@ -44,6 +44,7 @@ pub enum TokenKind {
     Stream,
     Test,
     App,
+    Schedule,
     Check,
     True,
     False,
@@ -117,6 +118,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Stream => write!(f, "'stream'"),
             TokenKind::Test => write!(f, "'test'"),
             TokenKind::App => write!(f, "'app'"),
+            TokenKind::Schedule => write!(f, "'schedule'"),
             TokenKind::Check => write!(f, "'check'"),
             TokenKind::True => write!(f, "'true'"),
             TokenKind::False => write!(f, "'false'"),
@@ -177,6 +179,7 @@ impl TokenKind {
             "stream" => Some(TokenKind::Stream),
             "test" => Some(TokenKind::Test),
             "app" => Some(TokenKind::App),
+            "schedule" => Some(TokenKind::Schedule),
             "check" => Some(TokenKind::Check),
             "true" => Some(TokenKind::True),
             "false" => Some(TokenKind::False),

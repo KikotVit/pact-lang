@@ -35,6 +35,14 @@ pub struct StoredStream {
     pub body: Vec<Statement>,
 }
 
+#[derive(Debug, Clone)]
+pub struct StoredSchedule {
+    pub intent: String,
+    pub interval_ms: u64,
+    pub effects: Vec<String>,
+    pub body: Vec<Statement>,
+}
+
 pub struct Interpreter {
     pub global: Environment,
     source: String,
@@ -49,11 +57,12 @@ pub struct Interpreter {
     pub type_defs: HashMap<String, Vec<(String, bool, Vec<crate::parser::ast::Constraint>)>>,
     pub routes: Vec<StoredRoute>,
     pub streams: Vec<StoredStream>,
+    pub schedules: Vec<StoredSchedule>,
     pub app_config: Option<(String, u16, Option<String>)>,
     /// Predetermined sequence for rng (testing)
     rng_sequence: Option<Vec<String>>,
     /// Effects blocked from global lookup (enforces `needs` declarations)
-    blocked_effects: Vec<String>,
+    pub blocked_effects: Vec<String>,
     /// Mock responses for http effect: URL -> response struct
     pub http_mock_responses: Option<HashMap<String, Value>>,
     /// Tracks modules currently being loaded to detect circular imports
@@ -194,6 +203,7 @@ impl Interpreter {
             type_defs: HashMap::new(),
             routes: Vec::new(),
             streams: Vec::new(),
+            schedules: Vec::new(),
             app_config: None,
             rng_sequence: None,
             blocked_effects: Vec::new(),
@@ -201,6 +211,11 @@ impl Interpreter {
             loading_modules: HashSet::new(),
             jwt_secret: None,
         }
+    }
+
+    /// Get the source code this interpreter was created with.
+    pub fn source_code(&self) -> &str {
+        &self.source
     }
 
     /// Load JWT secret from JWT_SECRET environment variable.
@@ -401,6 +416,20 @@ impl Interpreter {
                     method: method.clone(),
                     path: path.clone(),
                     intent: intent.clone(),
+                    effects: effects.clone(),
+                    body: body.clone(),
+                });
+                Ok(StmtResult::Value(Value::Nothing))
+            }
+            Statement::Schedule {
+                intent,
+                interval_ms,
+                effects,
+                body,
+            } => {
+                self.schedules.push(StoredSchedule {
+                    intent: intent.clone(),
+                    interval_ms: *interval_ms,
                     effects: effects.clone(),
                     body: body.clone(),
                 });
@@ -1952,7 +1981,9 @@ impl Interpreter {
         let table_name = match &args[0] {
             Value::String(s) => s.clone(),
             _ => {
-                return Err(self.error("db.delete_where first argument must be a String table name"));
+                return Err(
+                    self.error("db.delete_where first argument must be a String table name")
+                );
             }
         };
         self.db.delete_where(&table_name, &args[1])

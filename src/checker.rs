@@ -924,7 +924,9 @@ impl<'a> Checker<'a> {
                 }
             }
             // Check route body
-            Statement::Route { effects, body, .. } | Statement::Stream { effects, body, .. } => {
+            Statement::Route { effects, body, .. }
+            | Statement::Stream { effects, body, .. }
+            | Statement::Schedule { effects, body, .. } => {
                 let prev_fn_effects = self.current_fn_effects.take();
                 self.current_fn_effects = Some(effects.clone());
                 self.push_scope();

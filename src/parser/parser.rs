@@ -917,6 +917,8 @@ impl Parser {
                     self.parse_route_with_intent(intent)?
                 } else if self.at(&TokenKind::Stream) {
                     self.parse_stream_with_intent(intent)?
+                } else if self.at(&TokenKind::Schedule) {
+                    self.parse_schedule_with_intent(intent)?
                 } else {
                     self.parse_fn_decl(Some(intent))?
                 }
@@ -931,6 +933,12 @@ impl Parser {
                 return Err(self.error(
                     "Missing 'intent' block before stream declaration",
                     Some("Write: intent \"description\" on the line before stream"),
+                ));
+            }
+            TokenKind::Schedule => {
+                return Err(self.error(
+                    "Missing 'intent' block before schedule declaration",
+                    Some("Write: intent \"description\" on the line before schedule"),
                 ));
             }
             TokenKind::App => self.parse_app()?,
@@ -1521,6 +1529,67 @@ impl Parser {
             effects,
             body,
         })
+    }
+
+    fn parse_schedule_with_intent(&mut self, intent: String) -> Result<Statement, ParseError> {
+        self.advance(); // consume `schedule`
+        self.expect_contextual("every")?;
+        let interval_ms = self.parse_duration()?;
+        self.push_block("schedule");
+        self.expect(&TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        let mut effects = Vec::new();
+        if self.eat(&TokenKind::Needs)
+            && !self.at(&TokenKind::LBrace)
+            && !self.at(&TokenKind::Newline)
+        {
+            effects.push(self.expect_identifier()?);
+            while self.eat(&TokenKind::Comma) {
+                if self.at(&TokenKind::LBrace) || self.at(&TokenKind::Newline) {
+                    break;
+                }
+                effects.push(self.expect_identifier()?);
+            }
+        }
+        self.skip_newlines();
+
+        let body = self.parse_block_body()?;
+        self.expect_closing_brace()?;
+
+        Ok(Statement::Schedule {
+            intent,
+            interval_ms,
+            effects,
+            body,
+        })
+    }
+
+    fn parse_duration(&mut self) -> Result<u64, ParseError> {
+        let number = match self.current_kind().clone() {
+            TokenKind::IntLiteral(n) => {
+                self.advance();
+                n as u64
+            }
+            _ => {
+                return Err(self.error(
+                    "Expected duration number (e.g., 24h, 500ms)",
+                    Some("Valid units: ms, s, m, h, d"),
+                ));
+            }
+        };
+        let unit = self.expect_identifier()?;
+        match unit.as_str() {
+            "ms" => Ok(number),
+            "s" => Ok(number * 1000),
+            "m" => Ok(number * 60 * 1000),
+            "h" => Ok(number * 60 * 60 * 1000),
+            "d" => Ok(number * 24 * 60 * 60 * 1000),
+            _ => Err(self.error(
+                &format!("Unknown duration unit '{}'. Valid: ms, s, m, h, d", unit),
+                None,
+            )),
+        }
     }
 
     fn parse_app(&mut self) -> Result<Statement, ParseError> {
@@ -2993,6 +3062,45 @@ stream GET "/live" {
             assert!(fields[1].constraints.is_empty());
         } else {
             panic!("Expected TypeDecl::Struct");
+        }
+    }
+
+    #[test]
+    fn parse_schedule_block() {
+        let input = "intent \"cleanup\"\nschedule every 24h {\n  needs db, time\n}";
+        let program = parse_program(input);
+        match &program.statements[0] {
+            Statement::Schedule {
+                intent,
+                interval_ms,
+                effects,
+                ..
+            } => {
+                assert_eq!(intent, "cleanup");
+                assert_eq!(*interval_ms, 24 * 60 * 60 * 1000);
+                assert_eq!(effects, &vec!["db".to_string(), "time".to_string()]);
+            }
+            other => panic!("Expected Schedule, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_schedule_duration_formats() {
+        for (input, expected_ms) in [
+            ("500ms", 500u64),
+            ("30s", 30_000),
+            ("5m", 300_000),
+            ("2h", 7_200_000),
+            ("1d", 86_400_000),
+        ] {
+            let code = format!("intent \"test\"\nschedule every {} {{\n}}", input);
+            let program = parse_program(&code);
+            match &program.statements[0] {
+                Statement::Schedule { interval_ms, .. } => {
+                    assert_eq!(*interval_ms, expected_ms, "Failed for input: {}", input);
+                }
+                other => panic!("Expected Schedule for '{}', got: {:?}", input, other),
+            }
         }
     }
 }

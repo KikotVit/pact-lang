@@ -226,6 +226,22 @@ fn add_cors_headers(headers: &mut Vec<Header>) {
     );
 }
 
+// ── Schedule helpers ───────────────────────────────────────────────
+
+fn format_schedule_interval(ms: u64) -> String {
+    if ms % 86_400_000 == 0 {
+        format!("{}d", ms / 86_400_000)
+    } else if ms % 3_600_000 == 0 {
+        format!("{}h", ms / 3_600_000)
+    } else if ms % 60_000 == 0 {
+        format!("{}m", ms / 60_000)
+    } else if ms % 1000 == 0 {
+        format!("{}s", ms / 1000)
+    } else {
+        format!("{}ms", ms)
+    }
+}
+
 // ── Server ─────────────────────────────────────────────────────────
 
 pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
@@ -256,6 +272,42 @@ pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
         .collect();
 
     let db_path = interpreter.get_db_path();
+
+    // Spawn schedule threads
+    for schedule in &interpreter.schedules {
+        let interval = Duration::from_millis(schedule.interval_ms);
+        let intent = schedule.intent.clone();
+        let body = schedule.body.clone();
+        let effects = schedule.effects.clone();
+        let source = interpreter.source_code().to_string();
+        let db_path_clone = db_path.clone();
+
+        thread::spawn(move || {
+            loop {
+                let mut sched_interp = Interpreter::new(&source);
+                sched_interp.setup_test_effects();
+                if let Some(ref path) = db_path_clone {
+                    let _ = sched_interp.open_sqlite(path);
+                }
+                sched_interp.blocked_effects = vec!["db", "time", "rng", "log", "auth", "http"]
+                    .into_iter()
+                    .filter(|e| !effects.contains(&e.to_string()))
+                    .map(String::from)
+                    .collect();
+
+                let mut env = crate::interpreter::environment::Environment::new();
+                for stmt in &body {
+                    if let Err(e) = sched_interp.eval_statement(stmt, &mut env) {
+                        eprintln!("[schedule:{}] Error: {}", intent, e.message);
+                    }
+                }
+                thread::sleep(interval);
+            }
+        });
+        let dur = format_schedule_interval(schedule.interval_ms);
+        println!("  Schedule '{}' started (every {})", schedule.intent, dur);
+    }
+
     let mut rate_limiter = RateLimiter::new();
 
     for mut request in server.incoming_requests() {

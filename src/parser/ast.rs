@@ -58,6 +58,12 @@ pub enum Statement {
         effects: Vec<String>,
         body: Vec<Statement>,
     },
+    Schedule {
+        intent: String,
+        interval_ms: u64,
+        effects: Vec<String>,
+        body: Vec<Statement>,
+    },
     App {
         name: String,
         port: u16,

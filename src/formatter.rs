@@ -2,6 +2,20 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::parser::ast::*;
 
+fn format_duration(ms: u64) -> String {
+    if ms % 86_400_000 == 0 {
+        format!("{}d", ms / 86_400_000)
+    } else if ms % 3_600_000 == 0 {
+        format!("{}h", ms / 3_600_000)
+    } else if ms % 60_000 == 0 {
+        format!("{}m", ms / 60_000)
+    } else if ms % 1000 == 0 {
+        format!("{}s", ms / 1000)
+    } else {
+        format!("{}ms", ms)
+    }
+}
+
 pub fn format(source: &str) -> Result<String, String> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|e| format!("{}", e))?;
@@ -253,6 +267,26 @@ impl Formatter {
                     self.writeln(&format!("intent \"{}\"", intent));
                 }
                 self.writeln(&format!("stream {} \"{}\" {{", method, path));
+                self.indent += 1;
+                if !effects.is_empty() {
+                    self.writeln(&format!("needs {}", effects.join(", ")));
+                }
+                self.format_body(body);
+                self.indent -= 1;
+                self.writeln("}");
+            }
+
+            Statement::Schedule {
+                intent,
+                interval_ms,
+                effects,
+                body,
+            } => {
+                if !intent.is_empty() {
+                    self.writeln(&format!("intent \"{}\"", intent));
+                }
+                let dur = format_duration(*interval_ms);
+                self.writeln(&format!("schedule every {} {{", dur));
                 self.indent += 1;
                 if !effects.is_empty() {
                     self.writeln(&format!("needs {}", effects.join(", ")));
