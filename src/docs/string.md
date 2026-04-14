@@ -31,6 +31,25 @@ s.to_lower()
 s.trim()
 s.split(" ")
 s.replace("World", "PACT")
+s.starts_with("Hello")
+s.ends_with("World")
+s.chars()
+s.code()
+```
+
+## Character operations
+
+`chars()` splits a string into a list of single characters. `code()` returns the Unicode code point of the first character:
+
+```pact
+"abc".chars()        // list("a", "b", "c")
+"a".code()           // 97
+```
+
+Use `| chars` as a pipeline step:
+
+```pact
+"hello" | chars | map to _it.code() | sum   // sum of char codes
 ```
 
 ## Example

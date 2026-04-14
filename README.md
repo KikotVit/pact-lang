@@ -232,6 +232,8 @@ pact test users.pact
 | Early return | `return Forbidden if user.role != "Admin"` |
 | Strings | `"Hello {user.name}, you have {count} items"` |
 | HTTP routes | `route GET "/users/{id}" { ... }` |
+| Content types | `respond 200 with html as "text/html"` |
+| Scheduled tasks | `schedule every 24h { needs db ... }` |
 | SSE streaming | `stream GET "/live" { send db.watch("table") }` |
 | Validation | `name: String \| minlen 1 \| maxlen 100` on type fields |
 | App | `app Name { port: 8080, db: "sqlite://data.db" }` |
@@ -240,9 +242,9 @@ pact test users.pact
 
 | Effect | What it provides |
 |--------|-----------------|
-| `db` | `insert`, `query`, `find`, `update`, `delete`, `watch` — backed by SQLite |
-| `time` | `now()` — current timestamp |
-| `rng` | `uuid()`, `hex(n)` — random generation |
+| `db` | `insert`, `query`, `find`, `update`, `delete`, `delete_where`, `watch` — backed by SQLite |
+| `time` | `now()`, `days_ago(n)` — timestamps and date arithmetic |
+| `rng` | `uuid()`, `hex(n)`, `short_id()` — random generation |
 | `auth` | `require(request)` — validates JWT, `sign(payload)` — creates JWT |
 | `log` | `info()`, `warn()`, `error()` — structured logging |
 | `env` | `get(key)`, `require(key)` — environment variables |
@@ -288,7 +290,7 @@ Any editor with LSP support works. Run `pact lsp` as a stdio language server.
 
 PACT is v0.5. It works for building small APIs and CRUD services with SQLite persistence. It is not production-ready.
 
-What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, JWT auth, module/import system, validation constraints, deep type checker (struct fields, field access, operators, effects, methods, generic types), code formatter, LSP server, built-in MCP server (5 tools), built-in documentation, VS Code extension, CLI (`pact run`, `pact init`, `pact fmt`, `pact test`, `pact check`, `pact lsp`, `pact docs`), 496+ tests.
+What exists: lexer, parser, tree-walking interpreter, HTTP server, SSE streaming, SQLite storage, HTTP client, JWT auth, module/import system, validation constraints, deep type checker (struct fields, field access, operators, effects, methods, generic types), custom content-type responses, scheduled background tasks, code formatter, LSP server, built-in MCP server (5 tools), built-in documentation, VS Code extension, CLI (`pact run`, `pact init`, `pact fmt`, `pact test`, `pact check`, `pact lsp`, `pact docs`), 515+ tests.
 
 What's next: web playground.
 

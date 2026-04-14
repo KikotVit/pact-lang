@@ -1,6 +1,6 @@
 # Database
 
-PACT provides five database operations. Tables are auto-created on first insert. Declare `needs db` to use database operations.
+PACT provides six database operations. Tables are auto-created on first insert. Declare `needs db` to use database operations.
 
 ## Insert
 
@@ -44,6 +44,16 @@ Delete a record by ID:
 ```pact
 db.delete("todos", "1")
 ```
+
+## Delete Where
+
+Delete rows matching a filter. Returns the number of deleted rows:
+
+```pact
+let deleted: Int = db.delete_where("logs", { before: "2026-04-07T00:00:00Z" })
+```
+
+The `before` key compares against the `created_at` field — rows where `created_at < value` are deleted. Useful for scheduled cleanup of old records.
 
 ## Full example in a route
 

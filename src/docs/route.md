@@ -64,4 +64,16 @@ route DELETE "/users/{id}" {
 
 The `request` object provides `request.params`, `request.body`, and `request.query` for accessing path parameters, request body, and query string fields.
 
-> See also: fn, pipeline, app, effects
+## Custom Content-Type
+
+By default, `respond` sends JSON (`application/json`). Use `as` to set a different content type:
+
+```pact
+respond 200 with html as "text/html"
+respond 200 with svg as "image/svg+xml"
+respond 200 with text as "text/plain"
+```
+
+The body is sent as raw bytes (not JSON-serialized) when a custom content type is set.
+
+> See also: fn, pipeline, app, effects, schedule

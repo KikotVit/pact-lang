@@ -27,7 +27,7 @@ route POST "/items" {
 
 ## db — database access
 
-Provides `db.insert`, `db.query`, `db.find`, `db.update`, `db.delete`, `db.watch`.
+Provides `db.insert`, `db.query`, `db.find`, `db.update`, `db.delete`, `db.delete_where`, `db.watch`.
 
 ```pact
 db.insert("users", { id: "1", name: "Alice" })
@@ -40,10 +40,11 @@ db.watch("users")
 
 `db.watch` returns a stream descriptor for SSE. See `pact docs stream`.
 
-## time — current time
+## time — timestamps and date arithmetic
 
 ```pact
 let now: String = time.now()
+let week_ago: String = time.days_ago(7)
 ```
 
 ## rng — random values
@@ -51,6 +52,7 @@ let now: String = time.now()
 ```pact
 let id: String = rng.uuid()
 let hex: String = rng.hex(8)
+let code: String = rng.short_id()
 ```
 
 ## auth — JWT authentication

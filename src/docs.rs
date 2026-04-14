@@ -16,6 +16,7 @@ pub fn get_doc(topic: &str) -> Option<&'static str> {
         "http" => Some(include_str!("docs/http.md")),
         "modules" => Some(include_str!("docs/modules.md")),
         "stream" => Some(include_str!("docs/stream.md")),
+        "schedule" => Some(include_str!("docs/schedule.md")),
         _ => None,
     }
 }
@@ -39,7 +40,7 @@ pub fn list_topics() -> Vec<(&'static str, &'static str)> {
         ("type", "Struct types, union types, optional fields"),
         (
             "db",
-            "Database operations: insert, query, find, update, delete",
+            "Database operations: insert, query, find, update, delete, delete_where",
         ),
         ("test", "Test blocks, using (mock effects), assert"),
         (
@@ -62,6 +63,10 @@ pub fn list_topics() -> Vec<(&'static str, &'static str)> {
         (
             "stream",
             "Real-time SSE streaming with stream routes and db.watch()",
+        ),
+        (
+            "schedule",
+            "Background scheduled tasks with schedule every <duration>",
         ),
     ]
 }
@@ -91,6 +96,7 @@ mod tests {
             "http",
             "modules",
             "stream",
+            "schedule",
         ];
         for topic in &topics {
             let content = get_doc(topic);
@@ -106,7 +112,7 @@ mod tests {
     #[test]
     fn test_list_topics_count() {
         let topics = list_topics();
-        assert_eq!(topics.len(), 16, "Expected 16 topics, got {}", topics.len());
+        assert_eq!(topics.len(), 17, "Expected 17 topics, got {}", topics.len());
     }
 
     #[test]
