@@ -1503,6 +1503,7 @@ impl Interpreter {
             "db.delete" => self.builtin_db_delete(args),
             "db.watch" => self.builtin_db_watch(args),
             "time.now" => self.builtin_time_now(),
+            "time.days_ago" => self.builtin_time_days_ago(args),
             "rng.uuid" => self.builtin_rng_uuid(),
             "rng.hex" => self.builtin_rng_hex(args),
             "time.fixed" => {
@@ -1596,7 +1597,7 @@ impl Interpreter {
             "http.delete" => self.builtin_http_request("DELETE", args),
             _ => {
                 let mut err = self.error(&format!("Unknown builtin '{}'", name));
-                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), db.watch(), time.now(), rng.uuid(), rng.hex(), log.info(), log.warn(), log.error(), auth.require(), auth.sign(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
+                err.hint = Some("Available builtins: print(), list(), db.insert(), db.query(), db.find(), db.update(), db.delete(), db.watch(), time.now(), time.days_ago(), rng.uuid(), rng.hex(), log.info(), log.warn(), log.error(), auth.require(), auth.sign(), env.get(), env.require(), http.get(), http.post(), http.put(), http.delete()".to_string());
                 Err(err)
             }
         }
@@ -2118,8 +2119,25 @@ impl Interpreter {
         let time_str = self
             .fixed_time
             .clone()
-            .unwrap_or_else(|| "2026-04-02T12:00:00Z".to_string());
+            .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
         Ok(Value::String(time_str))
+    }
+
+    fn builtin_time_days_ago(&self, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let days = match args.first() {
+            Some(Value::Int(n)) => *n,
+            _ => return Err(self.error("time.days_ago expects 1 argument: days (Int)")),
+        };
+        let base = self
+            .fixed_time
+            .clone()
+            .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string());
+        let dt = chrono::NaiveDateTime::parse_from_str(&base, "%Y-%m-%dT%H:%M:%SZ")
+            .map_err(|e| self.error(&format!("Failed to parse time: {}", e)))?;
+        let result = dt - chrono::Duration::days(days);
+        Ok(Value::String(
+            result.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        ))
     }
 
     fn next_from_sequence(&mut self) -> Option<String> {
@@ -4912,5 +4930,33 @@ x
         } else {
             panic!("Expected Struct, got {:?}", result);
         }
+    }
+
+    #[test]
+    fn test_time_now_returns_current_time() {
+        let interp = Interpreter::new("");
+        let result = interp.builtin_time_now().unwrap();
+        if let Value::String(s) = result {
+            assert!(s.contains("T"), "Expected ISO 8601 format, got: {}", s);
+            assert!(s.ends_with("Z"), "Expected UTC timezone, got: {}", s);
+            assert_ne!(s, "2026-04-02T12:00:00Z", "Should not be hardcoded");
+        } else {
+            panic!("Expected String, got: {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_time_days_ago() {
+        let mut interp = Interpreter::new("");
+        interp.fixed_time = Some("2026-04-14T12:00:00Z".to_string());
+        let result = interp.builtin_time_days_ago(vec![Value::Int(7)]).unwrap();
+        assert_eq!(result, Value::String("2026-04-07T12:00:00Z".to_string()));
+    }
+
+    #[test]
+    fn test_time_days_ago_no_args() {
+        let interp = Interpreter::new("");
+        let result = interp.builtin_time_days_ago(vec![]);
+        assert!(result.is_err());
     }
 }
