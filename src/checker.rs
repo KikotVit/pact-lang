@@ -1105,7 +1105,11 @@ impl<'a> Checker<'a> {
                     return;
                 }
                 match op {
-                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                    BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Mod => {
                         let valid = matches!(
                             (&left_t, &right_t),
                             (ResolvedType::Int, ResolvedType::Int)
@@ -1423,20 +1427,20 @@ impl<'a> Checker<'a> {
                 let left_t = self.infer_expr(left);
                 let right_t = self.infer_expr(right);
                 match op {
-                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                        match (&left_t, &right_t) {
-                            (ResolvedType::Int, ResolvedType::Int) => ResolvedType::Int,
-                            (ResolvedType::Float, _) | (_, ResolvedType::Float) => {
-                                ResolvedType::Float
-                            }
-                            _ if matches!(op, BinaryOp::Add)
-                                && matches!(left_t, ResolvedType::String) =>
-                            {
-                                ResolvedType::String
-                            }
-                            _ => ResolvedType::Unknown,
+                    BinaryOp::Add
+                    | BinaryOp::Sub
+                    | BinaryOp::Mul
+                    | BinaryOp::Div
+                    | BinaryOp::Mod => match (&left_t, &right_t) {
+                        (ResolvedType::Int, ResolvedType::Int) => ResolvedType::Int,
+                        (ResolvedType::Float, _) | (_, ResolvedType::Float) => ResolvedType::Float,
+                        _ if matches!(op, BinaryOp::Add)
+                            && matches!(left_t, ResolvedType::String) =>
+                        {
+                            ResolvedType::String
                         }
-                    }
+                        _ => ResolvedType::Unknown,
+                    },
                     BinaryOp::Eq
                     | BinaryOp::NotEq
                     | BinaryOp::Lt

@@ -525,6 +525,7 @@ impl Parser {
             let op = match self.current_kind() {
                 TokenKind::Star => BinaryOp::Mul,
                 TokenKind::Slash => BinaryOp::Div,
+                TokenKind::Percent => BinaryOp::Mod,
                 _ => break,
             };
             self.advance();

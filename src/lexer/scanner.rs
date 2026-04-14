@@ -293,6 +293,12 @@ impl Lexer {
                 }
             }
 
+            '%' => {
+                let token = self.make_token(TokenKind::Percent, 1);
+                self.advance();
+                Ok(token)
+            }
+
             // Underscore: standalone = Underscore token, _foo = identifier
             '_' => {
                 if self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {

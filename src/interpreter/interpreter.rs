@@ -702,6 +702,34 @@ impl Interpreter {
                             }
                         }
                     }
+                    BinaryOp::Mod => {
+                        let mod_zero = || {
+                            let mut err = self.error("Modulo by zero");
+                            err.hint = Some(
+                                "Check that the divisor is not zero before using %".to_string(),
+                            );
+                            Err(err)
+                        };
+                        match (&left_val, &right_val) {
+                            (Value::Int(_), Value::Int(0)) => mod_zero(),
+                            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a % b)),
+                            (Value::Float(_), Value::Float(b)) if *b == 0.0 => mod_zero(),
+                            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a % b)),
+                            (Value::Int(a), Value::Float(b)) if *b == 0.0 => mod_zero(),
+                            (Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 % b)),
+                            (Value::Float(_), Value::Int(0)) => mod_zero(),
+                            (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a % *b as f64)),
+                            _ => {
+                                let mut err = self.error(&format!(
+                                    "Cannot use modulo on {} and {}",
+                                    left_val.type_name(),
+                                    right_val.type_name()
+                                ));
+                                err.hint = Some("Modulo works on Int and Float values".to_string());
+                                Err(err)
+                            }
+                        }
+                    }
                     BinaryOp::Eq => Ok(Value::Bool(left_val == right_val)),
                     BinaryOp::NotEq => Ok(Value::Bool(left_val != right_val)),
                     BinaryOp::Lt => match (&left_val, &right_val) {
