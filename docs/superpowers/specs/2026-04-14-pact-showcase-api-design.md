@@ -234,6 +234,19 @@ schedule every 1d {
 - Runs immediately on app start, then every 24h
 - **PACT features demonstrated:** `schedule` (new), background tasks, DB cleanup
 
+## Input Validation
+
+- `POST /paste` — return 400 if `content` is missing or empty
+- `POST /paste` — return 400 if `content` exceeds 64 KB
+- `POST /shorten` — return 400 if `url` is missing or empty
+- `GET /avatar/:name` — no validation needed (any string works)
+
+Validation is done in PACT code (not in the runtime), which itself showcases error handling:
+
+```pact
+return BadRequest { message: "content is required" } if request.body.content == nothing
+```
+
 ## App Declaration
 
 ```pact
