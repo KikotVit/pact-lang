@@ -3,13 +3,13 @@ use crate::parser::Parser;
 use crate::parser::ast::*;
 
 fn format_duration(ms: u64) -> String {
-    if ms % 86_400_000 == 0 {
+    if ms.is_multiple_of(86_400_000) {
         format!("{}d", ms / 86_400_000)
-    } else if ms % 3_600_000 == 0 {
+    } else if ms.is_multiple_of(3_600_000) {
         format!("{}h", ms / 3_600_000)
-    } else if ms % 60_000 == 0 {
+    } else if ms.is_multiple_of(60_000) {
         format!("{}m", ms / 60_000)
-    } else if ms % 1000 == 0 {
+    } else if ms.is_multiple_of(1000) {
         format!("{}s", ms / 1000)
     } else {
         format!("{}ms", ms)
@@ -156,10 +156,10 @@ impl Formatter {
                 body,
                 ..
             } => {
-                if let Some(intent_text) = intent {
-                    if !intent_text.is_empty() {
-                        self.writeln(&format!("intent \"{}\"", intent_text));
-                    }
+                if let Some(intent_text) = intent
+                    && !intent_text.is_empty()
+                {
+                    self.writeln(&format!("intent \"{}\"", intent_text));
                 }
 
                 let params_str: Vec<String> = params
@@ -650,10 +650,10 @@ impl Formatter {
     }
 
     fn format_block_expr(&self, stmts: &[Statement]) -> String {
-        if stmts.len() == 1 {
-            if let Statement::Expression(expr) = &stmts[0] {
-                return self.format_expr(expr);
-            }
+        if stmts.len() == 1
+            && let Statement::Expression(expr) = &stmts[0]
+        {
+            return self.format_expr(expr);
         }
 
         let mut out = String::from("{\n");

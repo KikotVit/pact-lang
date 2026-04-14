@@ -281,32 +281,29 @@ impl<'a> Checker<'a> {
     }
 
     fn check_list_elements(&mut self, expected: &ResolvedType, expr: &Expr, span: &Option<Span>) {
-        if let ResolvedType::List(expected_inner) = expected {
-            if !matches!(expected_inner.as_ref(), ResolvedType::Unknown) {
-                if let Expr::FnCall { callee, args, .. } = expr {
-                    if let Expr::Identifier(fn_name) = callee.as_ref() {
-                        if fn_name == "list" {
-                            for (i, arg) in args.iter().enumerate() {
-                                let arg_type = self.infer_expr(arg);
-                                if !matches!(arg_type, ResolvedType::Unknown)
-                                    && !Self::types_compatible(expected_inner, &arg_type)
-                                {
-                                    self.emit(
-                                        Severity::Error,
-                                        span,
-                                        format!(
-                                            "List<{}> element at position {} has type {}",
-                                            expected_inner, i, arg_type
-                                        ),
-                                        Some(format!(
-                                            "All elements must be {} to match List<{}>",
-                                            expected_inner, expected_inner
-                                        )),
-                                    );
-                                }
-                            }
-                        }
-                    }
+        if let ResolvedType::List(expected_inner) = expected
+            && !matches!(expected_inner.as_ref(), ResolvedType::Unknown)
+            && let Expr::FnCall { callee, args, .. } = expr
+            && let Expr::Identifier(fn_name) = callee.as_ref()
+            && fn_name == "list"
+        {
+            for (i, arg) in args.iter().enumerate() {
+                let arg_type = self.infer_expr(arg);
+                if !matches!(arg_type, ResolvedType::Unknown)
+                    && !Self::types_compatible(expected_inner, &arg_type)
+                {
+                    self.emit(
+                        Severity::Error,
+                        span,
+                        format!(
+                            "List<{}> element at position {} has type {}",
+                            expected_inner, i, arg_type
+                        ),
+                        Some(format!(
+                            "All elements must be {} to match List<{}>",
+                            expected_inner, expected_inner
+                        )),
+                    );
                 }
             }
         }
@@ -737,35 +734,35 @@ impl<'a> Checker<'a> {
         }
 
         // Check contradictions
-        if let (Some(min), Some(max)) = (min_val, max_val) {
-            if min > max {
-                self.diagnostics.push(Diagnostic {
-                    severity: Severity::Warning,
-                    line: fline,
-                    column: fcol,
-                    message: format!(
-                        "{}.{}: min ({}) > max ({}), no value can satisfy both",
-                        type_name, field.name, min, max
-                    ),
-                    hint: None,
-                    source_line: fsource.clone(),
-                });
-            }
+        if let (Some(min), Some(max)) = (min_val, max_val)
+            && min > max
+        {
+            self.diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                line: fline,
+                column: fcol,
+                message: format!(
+                    "{}.{}: min ({}) > max ({}), no value can satisfy both",
+                    type_name, field.name, min, max
+                ),
+                hint: None,
+                source_line: fsource.clone(),
+            });
         }
-        if let (Some(minl), Some(maxl)) = (minlen_val, maxlen_val) {
-            if minl > maxl {
-                self.diagnostics.push(Diagnostic {
-                    severity: Severity::Warning,
-                    line: fline,
-                    column: fcol,
-                    message: format!(
-                        "{}.{}: minlen ({}) > maxlen ({}), no value can satisfy both",
-                        type_name, field.name, minl, maxl
-                    ),
-                    hint: None,
-                    source_line: fsource.clone(),
-                });
-            }
+        if let (Some(minl), Some(maxl)) = (minlen_val, maxlen_val)
+            && minl > maxl
+        {
+            self.diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                line: fline,
+                column: fcol,
+                message: format!(
+                    "{}.{}: minlen ({}) > maxlen ({}), no value can satisfy both",
+                    type_name, field.name, minl, maxl
+                ),
+                hint: None,
+                source_line: fsource.clone(),
+            });
         }
     }
 
@@ -865,30 +862,30 @@ impl<'a> Checker<'a> {
                 // Check body statements
                 self.check_statements(body);
                 // Check implicit return (last expression in body)
-                if return_type.is_some() {
-                    if let Some(Statement::Expression(expr)) = body.last() {
-                        let actual = self.infer_expr(expr);
-                        // For Result return types, compare against the ok type
-                        let check_type = match &resolved_return {
-                            ResolvedType::Result { ok, .. } => ok.as_ref(),
-                            other => other,
-                        };
-                        let container_mismatch = !Self::types_compatible(check_type, &actual);
-                        if container_mismatch {
-                            self.emit(
-                                Severity::Error,
-                                span,
-                                format!(
-                                    "Function '{}' should return {}, got {}",
-                                    name, check_type, actual
-                                ),
-                                None,
-                            );
-                        }
-                        // Check list() element types against return List<T>
-                        if !container_mismatch {
-                            self.check_list_elements(check_type, expr, span);
-                        }
+                if return_type.is_some()
+                    && let Some(Statement::Expression(expr)) = body.last()
+                {
+                    let actual = self.infer_expr(expr);
+                    // For Result return types, compare against the ok type
+                    let check_type = match &resolved_return {
+                        ResolvedType::Result { ok, .. } => ok.as_ref(),
+                        other => other,
+                    };
+                    let container_mismatch = !Self::types_compatible(check_type, &actual);
+                    if container_mismatch {
+                        self.emit(
+                            Severity::Error,
+                            span,
+                            format!(
+                                "Function '{}' should return {}, got {}",
+                                name, check_type, actual
+                            ),
+                            None,
+                        );
+                    }
+                    // Check list() element types against return List<T>
+                    if !container_mismatch {
+                        self.check_list_elements(check_type, expr, span);
                     }
                 }
                 self.pop_scope();
@@ -958,28 +955,25 @@ impl<'a> Checker<'a> {
         match expr {
             // Check 2: Function argument type mismatch
             Expr::FnCall { callee, args, span } => {
-                if let Expr::Identifier(name) = callee.as_ref() {
-                    if let Some(sig) = self.fn_sigs.get(name).cloned() {
-                        if args.len() == sig.params.len() {
-                            for (arg, (param_name, param_type)) in
-                                args.iter().zip(sig.params.iter())
-                            {
-                                let actual = self.infer_expr(arg);
-                                if !Self::types_compatible(param_type, &actual) {
-                                    self.emit(
-                                        Severity::Error,
-                                        span,
-                                        format!(
-                                            "Argument '{}' expects {}, got {}",
-                                            param_name, param_type, actual
-                                        ),
-                                        Some(format!(
-                                            "Function '{}' parameter '{}' is declared as {}",
-                                            name, param_name, param_type
-                                        )),
-                                    );
-                                }
-                            }
+                if let Expr::Identifier(name) = callee.as_ref()
+                    && let Some(sig) = self.fn_sigs.get(name).cloned()
+                    && args.len() == sig.params.len()
+                {
+                    for (arg, (param_name, param_type)) in args.iter().zip(sig.params.iter()) {
+                        let actual = self.infer_expr(arg);
+                        if !Self::types_compatible(param_type, &actual) {
+                            self.emit(
+                                Severity::Error,
+                                span,
+                                format!(
+                                    "Argument '{}' expects {}, got {}",
+                                    param_name, param_type, actual
+                                ),
+                                Some(format!(
+                                    "Function '{}' parameter '{}' is declared as {}",
+                                    name, param_name, param_type
+                                )),
+                            );
                         }
                     }
                 }
@@ -1055,30 +1049,30 @@ impl<'a> Checker<'a> {
                 span,
             } => {
                 let subject_type = self.infer_expr(subject);
-                if let ResolvedType::Struct(name) = &subject_type {
-                    if let Some(TypeDef::Union { variants }) = self.type_defs.get(name) {
-                        // Check if any arm is a wildcard
-                        let has_wildcard =
-                            arms.iter().any(|a| matches!(a.pattern, Pattern::Wildcard));
-                        if !has_wildcard {
-                            let covered: Vec<&str> = arms
-                                .iter()
-                                .filter_map(|a| {
-                                    if let Pattern::Identifier(n) = &a.pattern {
-                                        Some(n.as_str())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect();
-                            let missing: Vec<&String> = variants
-                                .iter()
-                                .filter(|v| !covered.contains(&v.as_str()))
-                                .collect();
-                            if !missing.is_empty() {
-                                let missing_str: Vec<&str> =
-                                    missing.iter().map(|s| s.as_str()).collect();
-                                self.emit(
+                if let ResolvedType::Struct(name) = &subject_type
+                    && let Some(TypeDef::Union { variants }) = self.type_defs.get(name)
+                {
+                    // Check if any arm is a wildcard
+                    let has_wildcard = arms.iter().any(|a| matches!(a.pattern, Pattern::Wildcard));
+                    if !has_wildcard {
+                        let covered: Vec<&str> = arms
+                            .iter()
+                            .filter_map(|a| {
+                                if let Pattern::Identifier(n) = &a.pattern {
+                                    Some(n.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        let missing: Vec<&String> = variants
+                            .iter()
+                            .filter(|v| !covered.contains(&v.as_str()))
+                            .collect();
+                        if !missing.is_empty() {
+                            let missing_str: Vec<&str> =
+                                missing.iter().map(|s| s.as_str()).collect();
+                            self.emit(
                                     Severity::Warning,
                                     span,
                                     format!(
@@ -1091,7 +1085,6 @@ impl<'a> Checker<'a> {
                                         missing_str.join(", ")
                                     )),
                                 );
-                            }
                         }
                     }
                 }
@@ -1299,25 +1292,23 @@ impl<'a> Checker<'a> {
             // Check 6: Field access validation + Check 9: effect usage
             Expr::FieldAccess { object, field } => {
                 // Check 9: effect usage without needs
-                if let Expr::Identifier(name) = object.as_ref() {
-                    if KNOWN_EFFECTS.contains(&name.as_str()) {
-                        if let Some(ref declared) = self.current_fn_effects {
-                            if !declared.iter().any(|e| e == name) {
-                                self.emit(
-                                    Severity::Warning,
-                                    &None,
-                                    format!(
-                                        "Effect '{}' used without 'needs {}' declaration",
-                                        name, name
-                                    ),
-                                    Some(format!(
-                                        "Add 'needs {}' to the function or route signature",
-                                        name
-                                    )),
-                                );
-                            }
-                        }
-                    }
+                if let Expr::Identifier(name) = object.as_ref()
+                    && KNOWN_EFFECTS.contains(&name.as_str())
+                    && let Some(ref declared) = self.current_fn_effects
+                    && !declared.iter().any(|e| e == name)
+                {
+                    self.emit(
+                        Severity::Warning,
+                        &None,
+                        format!(
+                            "Effect '{}' used without 'needs {}' declaration",
+                            name, name
+                        ),
+                        Some(format!(
+                            "Add 'needs {}' to the function or route signature",
+                            name
+                        )),
+                    );
                 }
                 self.check_expr(object);
                 let obj_type = self.infer_expr(object);
@@ -1325,22 +1316,21 @@ impl<'a> Checker<'a> {
                     ResolvedType::Struct(type_name) => {
                         if let Some(TypeDef::Struct { fields: def_fields }) =
                             self.type_defs.get(type_name)
+                            && !def_fields.iter().any(|(n, _)| n == field)
                         {
-                            if !def_fields.iter().any(|(n, _)| n == field) {
-                                let available: Vec<&str> =
-                                    def_fields.iter().map(|(n, _)| n.as_str()).collect();
-                                self.emit(
-                                    Severity::Error,
-                                    &None,
-                                    format!(
-                                        "Type '{}' has no field '{}'. Available: {}",
-                                        type_name,
-                                        field,
-                                        available.join(", ")
-                                    ),
-                                    None,
-                                );
-                            }
+                            let available: Vec<&str> =
+                                def_fields.iter().map(|(n, _)| n.as_str()).collect();
+                            self.emit(
+                                Severity::Error,
+                                &None,
+                                format!(
+                                    "Type '{}' has no field '{}'. Available: {}",
+                                    type_name,
+                                    field,
+                                    available.join(", ")
+                                ),
+                                None,
+                            );
                         }
                     }
                     ResolvedType::Int
@@ -1477,14 +1467,12 @@ impl<'a> Checker<'a> {
             }
             Expr::FieldAccess { object, field } => {
                 let obj_type = self.infer_expr(object);
-                if let ResolvedType::Struct(type_name) = &obj_type {
-                    if let Some(TypeDef::Struct { fields: def_fields }) =
+                if let ResolvedType::Struct(type_name) = &obj_type
+                    && let Some(TypeDef::Struct { fields: def_fields }) =
                         self.type_defs.get(type_name)
-                    {
-                        if let Some((_, field_type)) = def_fields.iter().find(|(n, _)| n == field) {
-                            return field_type.clone();
-                        }
-                    }
+                    && let Some((_, field_type)) = def_fields.iter().find(|(n, _)| n == field)
+                {
+                    return field_type.clone();
                 }
                 ResolvedType::Unknown
             }

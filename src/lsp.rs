@@ -53,10 +53,10 @@ fn read_message(reader: &mut impl BufRead) -> io::Result<Option<String>> {
         if header.is_empty() {
             break; // End of headers
         }
-        if let Some(len_str) = header.strip_prefix("Content-Length: ") {
-            if let Ok(len) = len_str.parse::<usize>() {
-                content_length = Some(len);
-            }
+        if let Some(len_str) = header.strip_prefix("Content-Length: ")
+            && let Ok(len) = len_str.parse::<usize>()
+        {
+            content_length = Some(len);
         }
     }
 
@@ -495,21 +495,21 @@ pub fn run_lsp_server() {
             "textDocument/didChange" => {
                 if let Some(doc) = params.get("textDocument") {
                     let uri = doc["uri"].as_str().unwrap_or("").to_string();
-                    if let Some(changes) = params.get("contentChanges").and_then(|c| c.as_array()) {
-                        if let Some(change) = changes.first() {
-                            let text = change["text"].as_str().unwrap_or("").to_string();
-                            server.documents.insert(uri.clone(), text.clone());
+                    if let Some(changes) = params.get("contentChanges").and_then(|c| c.as_array())
+                        && let Some(change) = changes.first()
+                    {
+                        let text = change["text"].as_str().unwrap_or("").to_string();
+                        server.documents.insert(uri.clone(), text.clone());
 
-                            let (diags, _) = analyze(&text, &uri);
-                            let notif = make_notification(
-                                "textDocument/publishDiagnostics",
-                                serde_json::json!({
-                                    "uri": uri,
-                                    "diagnostics": diags,
-                                }),
-                            );
-                            let _ = write_message(&mut writer, &notif);
-                        }
+                        let (diags, _) = analyze(&text, &uri);
+                        let notif = make_notification(
+                            "textDocument/publishDiagnostics",
+                            serde_json::json!({
+                                "uri": uri,
+                                "diagnostics": diags,
+                            }),
+                        );
+                        let _ = write_message(&mut writer, &notif);
                     }
                 }
             }

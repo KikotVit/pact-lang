@@ -229,13 +229,13 @@ fn add_cors_headers(headers: &mut Vec<Header>) {
 // ── Schedule helpers ───────────────────────────────────────────────
 
 fn format_schedule_interval(ms: u64) -> String {
-    if ms % 86_400_000 == 0 {
+    if ms.is_multiple_of(86_400_000) {
         format!("{}d", ms / 86_400_000)
-    } else if ms % 3_600_000 == 0 {
+    } else if ms.is_multiple_of(3_600_000) {
         format!("{}h", ms / 3_600_000)
-    } else if ms % 60_000 == 0 {
+    } else if ms.is_multiple_of(60_000) {
         format!("{}m", ms / 60_000)
-    } else if ms % 1000 == 0 {
+    } else if ms.is_multiple_of(1000) {
         format!("{}s", ms / 1000)
     } else {
         format!("{}ms", ms)

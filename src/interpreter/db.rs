@@ -448,11 +448,11 @@ impl DbBackend {
             DbBackend::Memory { tables } => {
                 if let Some(rows) = tables.get_mut(table) {
                     for row in rows.iter_mut() {
-                        if let Value::Struct { fields, .. } = row {
-                            if fields.get("id") == Some(&Value::String(id.to_string())) {
-                                *row = new_value.clone();
-                                return Ok(new_value);
-                            }
+                        if let Value::Struct { fields, .. } = row
+                            && fields.get("id") == Some(&Value::String(id.to_string()))
+                        {
+                            *row = new_value.clone();
+                            return Ok(new_value);
                         }
                     }
                 }
@@ -525,11 +525,11 @@ impl DbBackend {
                 if let Some(rows) = tables.get_mut(table) {
                     let mut removed = None;
                     rows.retain(|row| {
-                        if let Value::Struct { fields, .. } = row {
-                            if fields.get("id") == Some(&Value::String(id.to_string())) {
-                                removed = Some(row.clone());
-                                return false;
-                            }
+                        if let Value::Struct { fields, .. } = row
+                            && fields.get("id") == Some(&Value::String(id.to_string()))
+                        {
+                            removed = Some(row.clone());
+                            return false;
                         }
                         true
                     });
@@ -639,10 +639,10 @@ impl DbBackend {
                 if let Some(rows) = tables.get_mut(table) {
                     let before_count = rows.len();
                     rows.retain(|row| {
-                        if let Value::Struct { fields, .. } = row {
-                            if let Some(Value::String(created)) = fields.get("created_at") {
-                                return created.as_str() >= before.as_str();
-                            }
+                        if let Value::Struct { fields, .. } = row
+                            && let Some(Value::String(created)) = fields.get("created_at")
+                        {
+                            return created.as_str() >= before.as_str();
                         }
                         true // keep rows without created_at
                     });
@@ -715,13 +715,13 @@ pub fn sse_query_new_rows(
     let mut where_parts = vec!["rowid > ?".to_string()];
     let mut param_values: Vec<Box<dyn ToSql>> = vec![Box::new(since_rowid)];
 
-    if let Some(filter_val) = filter {
-        if let Value::Struct { fields, .. } = filter_val.as_ref() {
-            for col in &cols {
-                if let Some(val) = fields.get(col) {
-                    where_parts.push(format!("\"{}\" = ?", col));
-                    param_values.push(value_to_sql(val));
-                }
+    if let Some(filter_val) = filter
+        && let Value::Struct { fields, .. } = filter_val.as_ref()
+    {
+        for col in &cols {
+            if let Some(val) = fields.get(col) {
+                where_parts.push(format!("\"{}\" = ?", col));
+                param_values.push(value_to_sql(val));
             }
         }
     }

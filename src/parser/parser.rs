@@ -405,11 +405,11 @@ impl Parser {
     }
 
     fn expect_contextual(&mut self, word: &str) -> Result<(), ParseError> {
-        if let TokenKind::Identifier(ref w) = self.current_kind().clone() {
-            if w == word {
-                self.advance();
-                return Ok(());
-            }
+        if let TokenKind::Identifier(ref w) = self.current_kind().clone()
+            && w == word
+        {
+            self.advance();
+            return Ok(());
         }
         Err(self.error(
             &format!("Expected '{}', found {}", word, self.current_kind()),
@@ -418,11 +418,11 @@ impl Parser {
     }
 
     fn eat_contextual(&mut self, word: &str) -> bool {
-        if let TokenKind::Identifier(ref w) = self.current_kind().clone() {
-            if w == word {
-                self.advance();
-                return true;
-            }
+        if let TokenKind::Identifier(ref w) = self.current_kind().clone()
+            && w == word
+        {
+            self.advance();
+            return true;
         }
         false
     }
@@ -471,15 +471,15 @@ impl Parser {
         let left = self.parse_addition()?;
 
         // Check for `is` (contextual keyword)
-        if let TokenKind::Identifier(ref word) = self.current_kind().clone() {
-            if word == "is" {
-                self.advance();
-                let type_name = self.expect_identifier()?;
-                return Ok(Expr::Is {
-                    expr: Box::new(left),
-                    type_name,
-                });
-            }
+        if let TokenKind::Identifier(ref word) = self.current_kind().clone()
+            && word == "is"
+        {
+            self.advance();
+            let type_name = self.expect_identifier()?;
+            return Ok(Expr::Is {
+                expr: Box::new(left),
+                type_name,
+            });
         }
 
         let op = match self.current_kind() {
@@ -1276,10 +1276,10 @@ impl Parser {
             return true;
         }
         // Check for identifier followed by colon
-        if let TokenKind::Identifier(_) = self.peek_at(offset) {
-            if *self.peek_at(offset + 1) == TokenKind::Colon {
-                return true;
-            }
+        if let TokenKind::Identifier(_) = self.peek_at(offset)
+            && *self.peek_at(offset + 1) == TokenKind::Colon
+        {
+            return true;
         }
         // Check for string key followed by colon (e.g. { "url": value })
         match self.peek_at(offset) {
@@ -1368,10 +1368,10 @@ impl Parser {
                 self.expect(&TokenKind::StringEnd)?;
 
                 // If only one literal part and no interpolation, treat as simple
-                if parts.len() == 1 {
-                    if let StringPart::Literal(ref text) = parts[0] {
-                        return Ok(Expr::StringLiteral(StringExpr::Simple(text.clone())));
-                    }
+                if parts.len() == 1
+                    && let StringPart::Literal(ref text) = parts[0]
+                {
+                    return Ok(Expr::StringLiteral(StringExpr::Simple(text.clone())));
                 }
 
                 Ok(Expr::StringLiteral(StringExpr::Interpolated(parts)))

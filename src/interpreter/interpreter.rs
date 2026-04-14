@@ -113,47 +113,47 @@ fn validate_constraint(
     for c in constraints {
         match c {
             Constraint::Min(n) => {
-                if let Value::Int(v) = value {
-                    if *v < *n {
-                        return Some(format!(
-                            "'{}' must be at least {} (got {})",
-                            field_name, n, v
-                        ));
-                    }
+                if let Value::Int(v) = value
+                    && *v < *n
+                {
+                    return Some(format!(
+                        "'{}' must be at least {} (got {})",
+                        field_name, n, v
+                    ));
                 }
             }
             Constraint::Max(n) => {
-                if let Value::Int(v) = value {
-                    if *v > *n {
-                        return Some(format!(
-                            "'{}' must be at most {} (got {})",
-                            field_name, n, v
-                        ));
-                    }
+                if let Value::Int(v) = value
+                    && *v > *n
+                {
+                    return Some(format!(
+                        "'{}' must be at most {} (got {})",
+                        field_name, n, v
+                    ));
                 }
             }
             Constraint::MinLen(n) => {
-                if let Value::String(s) = value {
-                    if s.len() < *n {
-                        return Some(format!(
-                            "'{}' must be at least {} characters (got {})",
-                            field_name,
-                            n,
-                            s.len()
-                        ));
-                    }
+                if let Value::String(s) = value
+                    && s.len() < *n
+                {
+                    return Some(format!(
+                        "'{}' must be at least {} characters (got {})",
+                        field_name,
+                        n,
+                        s.len()
+                    ));
                 }
             }
             Constraint::MaxLen(n) => {
-                if let Value::String(s) = value {
-                    if s.len() > *n {
-                        return Some(format!(
-                            "'{}' must be at most {} characters (got {})",
-                            field_name,
-                            n,
-                            s.len()
-                        ));
-                    }
+                if let Value::String(s) = value
+                    && s.len() > *n
+                {
+                    return Some(format!(
+                        "'{}' must be at most {} characters (got {})",
+                        field_name,
+                        n,
+                        s.len()
+                    ));
                 }
             }
             Constraint::Format(fmt) => {
@@ -832,18 +832,15 @@ impl Interpreter {
                     fields.insert("content_type".to_string(), Value::String(ct.clone()));
                 }
                 // For redirects, extract location to top level
-                if let Value::Int(code) = &status_val {
-                    if matches!(code, 301 | 302 | 307 | 308) {
-                        if let Value::Struct {
-                            fields: body_fields,
-                            ..
-                        } = &body_val
-                        {
-                            if let Some(loc) = body_fields.get("location") {
-                                fields.insert("location".to_string(), loc.clone());
-                            }
-                        }
-                    }
+                if let Value::Int(code) = &status_val
+                    && matches!(code, 301 | 302 | 307 | 308)
+                    && let Value::Struct {
+                        fields: body_fields,
+                        ..
+                    } = &body_val
+                    && let Some(loc) = body_fields.get("location")
+                {
+                    fields.insert("location".to_string(), loc.clone());
                 }
                 Ok(Value::Struct {
                     type_name: "Response".to_string(),
@@ -1248,11 +1245,11 @@ impl Interpreter {
                         let result = self.eval_expr(body, &mut step_env)?;
                         // If body is a `respond` expression (Response struct),
                         // trigger early return from the route — same as `return respond`.
-                        if let Value::Struct { type_name, .. } = &result {
-                            if type_name == "Response" {
-                                self.pending_return = Some(result);
-                                return Err(self.error("__RETURN__"));
-                            }
+                        if let Value::Struct { type_name, .. } = &result
+                            && type_name == "Response"
+                        {
+                            self.pending_return = Some(result);
+                            return Err(self.error("__RETURN__"));
                         }
                         Ok(result)
                     }
@@ -1316,23 +1313,22 @@ impl Interpreter {
                             }
                             // Validate constraints
                             for (fname, _, constraints) in &type_fields {
-                                if let Some(value) = fields.get(fname) {
-                                    if let Some(err) =
+                                if let Some(value) = fields.get(fname)
+                                    && let Some(err) =
                                         validate_constraint(fname, value, constraints)
-                                    {
-                                        return Ok(Value::Error {
-                                            variant: "ValidationError".to_string(),
-                                            fields: Some({
-                                                let mut m = HashMap::new();
-                                                m.insert("message".to_string(), Value::String(err));
-                                                m.insert(
-                                                    "field".to_string(),
-                                                    Value::String(fname.clone()),
-                                                );
-                                                m
-                                            }),
-                                        });
-                                    }
+                                {
+                                    return Ok(Value::Error {
+                                        variant: "ValidationError".to_string(),
+                                        fields: Some({
+                                            let mut m = HashMap::new();
+                                            m.insert("message".to_string(), Value::String(err));
+                                            m.insert(
+                                                "field".to_string(),
+                                                Value::String(fname.clone()),
+                                            );
+                                            m
+                                        }),
+                                    });
                                 }
                             }
                             Ok(current)
@@ -1540,16 +1536,17 @@ impl Interpreter {
 
     fn call_builtin(&mut self, name: &str, args: Vec<Value>) -> Result<Value, RuntimeError> {
         // Error if db.* called without db config in app mode
-        if name.starts_with("db.") && name != "db.memory" {
-            if let Some((_, _, ref db_url)) = self.app_config {
-                if db_url.is_none() && matches!(self.db, DbBackend::Memory { .. }) {
-                    let mut err = self.error("Database not configured");
-                    err.hint = Some(
+        if name.starts_with("db.")
+            && name != "db.memory"
+            && let Some((_, _, ref db_url)) = self.app_config
+            && db_url.is_none()
+            && matches!(self.db, DbBackend::Memory { .. })
+        {
+            let mut err = self.error("Database not configured");
+            err.hint = Some(
                         "Add db to your app declaration:\n\n  app MyService {\n    port: 8080,\n    db: \"sqlite://data.db\",\n  }".to_string()
                     );
-                    return Err(err);
-                }
-            }
+            return Err(err);
         }
         match name {
             "list" => Ok(Value::List(args)),
@@ -2009,23 +2006,21 @@ impl Interpreter {
             if let Some(Value::Struct {
                 fields: headers, ..
             }) = fields.get("headers")
+                && let Some(Value::String(auth_header)) = headers.get("authorization")
             {
-                if let Some(Value::String(auth_header)) = headers.get("authorization") {
-                    let token = auth_header
-                        .strip_prefix("Bearer ")
-                        .unwrap_or(auth_header.as_str());
-                    if !token.is_empty() {
-                        return Some(token.to_string());
-                    }
+                let token = auth_header
+                    .strip_prefix("Bearer ")
+                    .unwrap_or(auth_header.as_str());
+                if !token.is_empty() {
+                    return Some(token.to_string());
                 }
             }
             // Fallback: check query.token (for SSE/EventSource which can't set headers)
-            if let Some(Value::Struct { fields: query, .. }) = fields.get("query") {
-                if let Some(Value::String(token)) = query.get("token") {
-                    if !token.is_empty() {
-                        return Some(token.clone());
-                    }
-                }
+            if let Some(Value::Struct { fields: query, .. }) = fields.get("query")
+                && let Some(Value::String(token)) = query.get("token")
+                && !token.is_empty()
+            {
+                return Some(token.clone());
             }
         }
         None
