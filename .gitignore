@@ -10,3 +10,4 @@ editors/vscode/node_modules/
 editors/vscode/out/
 editors/vscode/package-lock.json
 chat.db*
+data/
