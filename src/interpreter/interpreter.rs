@@ -1011,6 +1011,15 @@ impl Interpreter {
                     Ok(Value::Int(int_sum))
                 }
             }
+            PipelineStep::Chars => match &current {
+                Value::String(s) => Ok(Value::List(
+                    s.chars().map(|c| Value::String(c.to_string())).collect(),
+                )),
+                _ => Err(self.error(&format!(
+                    "'chars' expects a String, got {}",
+                    current.type_name()
+                ))),
+            },
             PipelineStep::Flatten => {
                 let items = self.require_list(&current, "flatten")?;
                 let mut result = Vec::new();
@@ -1387,6 +1396,16 @@ impl Interpreter {
                     }
                     _ => Err(self.error("String.replace() expects two String arguments")),
                 },
+                "chars" => Ok(Value::List(
+                    s.chars().map(|c| Value::String(c.to_string())).collect(),
+                )),
+                "code" => {
+                    if let Some(c) = s.chars().next() {
+                        Ok(Value::Int(c as i64))
+                    } else {
+                        Err(self.error("Cannot get code of empty string"))
+                    }
+                }
                 _ => {
                     // Keep in sync with match arms above
                     let string_methods: Vec<String> = vec![
@@ -1399,6 +1418,8 @@ impl Interpreter {
                         "starts_with",
                         "ends_with",
                         "replace",
+                        "chars",
+                        "code",
                     ]
                     .into_iter()
                     .map(String::from)
@@ -4978,6 +4999,49 @@ x
         } else {
             panic!("Expected String, got: {:?}", result);
         }
+    }
+
+    #[test]
+    fn test_string_chars() {
+        let result = eval("\"abc\".chars()");
+        assert_eq!(
+            result,
+            Value::List(vec![
+                Value::String("a".to_string()),
+                Value::String("b".to_string()),
+                Value::String("c".to_string()),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_string_chars_empty() {
+        let result = eval("\"\".chars()");
+        assert_eq!(result, Value::List(vec![]));
+    }
+
+    #[test]
+    fn test_string_code() {
+        let result = eval("\"a\".code()");
+        assert_eq!(result, Value::Int(97));
+    }
+
+    #[test]
+    fn test_string_code_unicode() {
+        let result = eval("\"é\".code()");
+        assert_eq!(result, Value::Int(233));
+    }
+
+    #[test]
+    fn test_chars_pipeline() {
+        let result = eval("\"ab\" | chars");
+        assert_eq!(
+            result,
+            Value::List(vec![
+                Value::String("a".to_string()),
+                Value::String("b".to_string()),
+            ])
+        );
     }
 
     #[test]

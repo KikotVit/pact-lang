@@ -262,6 +262,7 @@ pub enum PipelineStep {
     Unique,
     Count,
     Sum,
+    Chars,
     ExpectSuccess,
     OnSuccess {
         body: Expr,

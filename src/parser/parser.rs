@@ -361,6 +361,10 @@ impl Parser {
                     self.advance();
                     Ok(PipelineStep::Sum)
                 }
+                "chars" => {
+                    self.advance();
+                    Ok(PipelineStep::Chars)
+                }
                 "on" => {
                     self.advance();
                     if self.eat_contextual("success") {

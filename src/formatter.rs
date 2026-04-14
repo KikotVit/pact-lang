@@ -543,6 +543,7 @@ impl Formatter {
             PipelineStep::Unique => "unique".to_string(),
             PipelineStep::Count => "count".to_string(),
             PipelineStep::Sum => "sum".to_string(),
+            PipelineStep::Chars => "chars".to_string(),
             PipelineStep::ExpectSuccess => "expect success".to_string(),
             PipelineStep::OnSuccess { body } => {
                 format!("on success: {}", self.format_expr(body))
