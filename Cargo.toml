@@ -6,7 +6,7 @@ description = "The PACT programming language — compiler and interpreter"
 license = "MIT"
 repository = "https://github.com/KikotVit/pact-lang"
 keywords = ["language", "compiler", "interpreter"]
-rust-version = "1.85"
+rust-version = "1.88"
 
 [dependencies]
 tiny_http = "0.12"
