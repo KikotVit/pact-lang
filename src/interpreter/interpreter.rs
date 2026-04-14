@@ -1459,6 +1459,14 @@ impl Interpreter {
                         Err(self.error("Cannot get code of empty string"))
                     }
                 }
+                "hash" => {
+                    // DJB2 hash — good distribution for short strings
+                    let mut h: i64 = 5381;
+                    for c in s.chars() {
+                        h = ((h << 5).wrapping_add(h)).wrapping_add(c as i64);
+                    }
+                    Ok(Value::Int(h.abs()))
+                }
                 _ => {
                     // Keep in sync with match arms above
                     let string_methods: Vec<String> = vec![
@@ -1473,6 +1481,7 @@ impl Interpreter {
                         "replace",
                         "chars",
                         "code",
+                        "hash",
                     ]
                     .into_iter()
                     .map(String::from)
