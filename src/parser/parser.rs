@@ -618,9 +618,43 @@ impl Parser {
                 let status = self.parse_or()?;
                 self.expect_contextual("with")?;
                 let body = self.parse_or()?;
+                let content_type = if self.eat(&TokenKind::As) {
+                    match self.current().kind {
+                        TokenKind::RawStringLiteral(ref s) => {
+                            let ct = s.clone();
+                            self.advance();
+                            Some(ct)
+                        }
+                        TokenKind::StringStart => {
+                            self.advance(); // consume StringStart
+                            if let TokenKind::StringFragment(text) = self.current_kind().clone() {
+                                self.advance();
+                                self.expect(&TokenKind::StringEnd)?;
+                                Some(text)
+                            } else if self.at(&TokenKind::StringEnd) {
+                                self.advance();
+                                Some(String::new())
+                            } else {
+                                return Err(self.error(
+                                    "Expected string after 'as' in respond",
+                                    Some("Example: respond 200 with body as \"text/html\""),
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(self.error(
+                                "Expected string after 'as' in respond",
+                                Some("Example: respond 200 with body as \"text/html\""),
+                            ))
+                        }
+                    }
+                } else {
+                    None
+                };
                 Ok(Expr::Respond {
                     status: Box::new(status),
                     body: Box::new(body),
+                    content_type,
                 })
             }
             TokenKind::Identifier(ref name) if name == "send" => {
@@ -2685,6 +2719,34 @@ fn create_user(data: NewUser) -> User needs db, time, rng {
     fn parse_respond_expression() {
         let expr = parse_expr("respond 200 with nothing");
         assert!(matches!(expr, Expr::Respond { .. }));
+    }
+
+    #[test]
+    fn parse_respond_with_content_type() {
+        let expr = parse_expr("respond 200 with html as \"text/html\"");
+        match expr {
+            Expr::Respond {
+                status,
+                body,
+                content_type,
+            } => {
+                assert!(matches!(*status, Expr::IntLiteral(200)));
+                assert!(matches!(*body, Expr::Identifier(ref n) if n == "html"));
+                assert_eq!(content_type, Some("text/html".to_string()));
+            }
+            other => panic!("Expected Respond, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_respond_without_content_type() {
+        let expr = parse_expr("respond 200 with data");
+        match expr {
+            Expr::Respond { content_type, .. } => {
+                assert_eq!(content_type, None);
+            }
+            other => panic!("Expected Respond, got: {:?}", other),
+        }
     }
 
     #[test]

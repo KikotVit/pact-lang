@@ -161,6 +161,7 @@ pub enum Expr {
     Respond {
         status: Box<Expr>,
         body: Box<Expr>,
+        content_type: Option<String>,
     },
     Send {
         body: Box<Expr>,

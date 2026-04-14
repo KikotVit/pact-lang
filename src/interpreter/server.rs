@@ -341,9 +341,28 @@ pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
                         Some(Value::Int(n)) => *n as i32,
                         _ => 500,
                     };
+                    let custom_ct = fields.get("content_type").and_then(|v| {
+                        if let Value::String(ct) = v {
+                            Some(ct.clone())
+                        } else {
+                            None
+                        }
+                    });
                     let body = fields.get("body").unwrap_or(&Value::Nothing);
-                    let json_body = serde_json::to_string(&value_to_json(body)).unwrap_or_default();
-                    let _ = request.respond(make_json_response(status, &json_body));
+                    if let Some(ct) = custom_ct {
+                        let body_str = match body {
+                            Value::String(s) => s.clone(),
+                            other => {
+                                serde_json::to_string(&value_to_json(other)).unwrap_or_default()
+                            }
+                        };
+                        let _ = request
+                            .respond(make_response_with_content_type(status, &body_str, &ct));
+                    } else {
+                        let json_body =
+                            serde_json::to_string(&value_to_json(body)).unwrap_or_default();
+                        let _ = request.respond(make_json_response(status, &json_body));
+                    }
                 }
                 Ok(_) => {
                     let _ = request.respond(make_json_response(
@@ -426,10 +445,27 @@ pub fn start_server(interpreter: &mut Interpreter, name: &str, port: u16) {
                             make_json_response(status, &json_body)
                         }
                     } else {
+                        let custom_ct = fields.get("content_type").and_then(|v| {
+                            if let Value::String(ct) = v {
+                                Some(ct.clone())
+                            } else {
+                                None
+                            }
+                        });
                         let body = fields.get("body").unwrap_or(&Value::Nothing);
-                        let json_body =
-                            serde_json::to_string(&value_to_json(body)).unwrap_or_default();
-                        make_json_response(status, &json_body)
+                        if let Some(ct) = custom_ct {
+                            let body_str = match body {
+                                Value::String(s) => s.clone(),
+                                other => {
+                                    serde_json::to_string(&value_to_json(other)).unwrap_or_default()
+                                }
+                            };
+                            make_response_with_content_type(status, &body_str, &ct)
+                        } else {
+                            let json_body =
+                                serde_json::to_string(&value_to_json(body)).unwrap_or_default();
+                            make_json_response(status, &json_body)
+                        }
                     }
                 }
                 Ok(other) => {
@@ -523,6 +559,24 @@ fn make_redirect_response(status: i32, location: &str) -> Response<std::io::Curs
     let location_header = Header::from_bytes("Location", location).unwrap();
     let content_type = Header::from_bytes("Content-Type", "application/json").unwrap();
     let mut headers = vec![location_header, content_type];
+    add_cors_headers(&mut headers);
+    Response::new(
+        StatusCode(status as u16),
+        headers,
+        std::io::Cursor::new(data.clone()),
+        Some(data.len()),
+        None,
+    )
+}
+
+fn make_response_with_content_type(
+    status: i32,
+    body: &str,
+    content_type: &str,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let data = body.as_bytes().to_vec();
+    let ct_header = Header::from_bytes("Content-Type", content_type).unwrap();
+    let mut headers = vec![ct_header];
     add_cors_headers(&mut headers);
     Response::new(
         StatusCode(status as u16),

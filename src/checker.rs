@@ -1204,7 +1204,7 @@ impl<'a> Checker<'a> {
             Expr::Send { body } => {
                 self.check_expr(body);
             }
-            Expr::Respond { status, body } => {
+            Expr::Respond { status, body, .. } => {
                 self.check_expr(status);
                 self.check_expr(body);
             }

@@ -789,12 +789,19 @@ impl Interpreter {
                 };
                 Ok(Value::Bool(result))
             }
-            Expr::Respond { status, body } => {
+            Expr::Respond {
+                status,
+                body,
+                content_type,
+            } => {
                 let status_val = self.eval_expr(status, env)?;
                 let body_val = self.eval_expr(body, env)?;
                 let mut fields = HashMap::new();
                 fields.insert("status".to_string(), status_val.clone());
                 fields.insert("body".to_string(), body_val.clone());
+                if let Some(ct) = content_type {
+                    fields.insert("content_type".to_string(), Value::String(ct.clone()));
+                }
                 // For redirects, extract location to top level
                 if let Value::Int(code) = &status_val {
                     if matches!(code, 301 | 302 | 307 | 308) {
@@ -4175,6 +4182,34 @@ test "add works" {
             assert!(matches!(fields.get("body"), Some(Value::Struct { .. })));
         } else {
             panic!("Expected Response struct");
+        }
+    }
+
+    #[test]
+    fn test_respond_with_content_type() {
+        let result = eval(r#"respond 200 with "<h1>Hello</h1>" as "text/html""#);
+        if let Value::Struct { fields, .. } = result {
+            assert_eq!(
+                fields.get("content_type"),
+                Some(&Value::String("text/html".to_string()))
+            );
+            assert_eq!(
+                fields.get("body"),
+                Some(&Value::String("<h1>Hello</h1>".to_string()))
+            );
+            assert_eq!(fields.get("status"), Some(&Value::Int(200)));
+        } else {
+            panic!("Expected Struct Response");
+        }
+    }
+
+    #[test]
+    fn test_respond_without_content_type_has_no_ct_field() {
+        let result = eval(r#"respond 200 with "hello""#);
+        if let Value::Struct { fields, .. } = result {
+            assert_eq!(fields.get("content_type"), None);
+        } else {
+            panic!("Expected Struct Response");
         }
     }
 

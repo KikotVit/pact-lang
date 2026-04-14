@@ -437,12 +437,20 @@ impl Formatter {
                 format!("{} is {}", self.format_expr(expr), type_name)
             }
 
-            Expr::Respond { status, body } => {
-                format!(
+            Expr::Respond {
+                status,
+                body,
+                content_type,
+            } => {
+                let base = format!(
                     "respond {} with {}",
                     self.format_expr(status),
                     self.format_expr(body)
-                )
+                );
+                match content_type {
+                    Some(ct) => format!("{} as \"{}\"", base, ct),
+                    None => base,
+                }
             }
 
             Expr::Send { body } => {
